@@ -1,0 +1,2 @@
+copy cluster-core.lua "C:\Users\Levin\AppData\Roaming\.minecraft\saves\Lua Test 1_12_2 GC\opencomputers\55336006-68e8-48c3-bf48-ffa0443bcf4f\home\"
+copy cluster-node.lua "C:\Users\Levin\AppData\Roaming\.minecraft\saves\Lua Test 1_12_2 GC\opencomputers\c8a380db-a73c-4f3c-aa46-3491f713478c\home\"
