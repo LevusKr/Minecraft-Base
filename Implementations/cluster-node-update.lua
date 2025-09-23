@@ -20,6 +20,7 @@ local Logger = require("cluster/logger");
 local nas = require("cluster/nas-library");
 local network = require("cluster/network");
 local Packet = require("cluster/network_packet");
+local utils_string = require("cluster/utils-string");
 
 local component = require("component");
 local computer = require("computer");
@@ -57,8 +58,6 @@ function data_handle(_, _packet_request)
 
     local data_handle_success, data_handle_result = pcall(
         function(_packet_request)
-
-
 
             local packet_request = Packet:decode( _packet_request );
             if packet_request.port ~= constants.port.update then return; end
@@ -113,7 +112,7 @@ function data_handle(_, _packet_request)
                     local send_success, send_result = packet_request:send_response( response );
 
                     if send_success then
-                        logger:info("Response to client '"  .. tostring( client ) ..  "': '" .. tostring( response.success ) .. " - " .. tostring( response.result ) .. "'\n");
+                        logger:info("Response to client '"  .. tostring( client ) ..  "': '" .. tostring( response.success ) .. " - " .. tostring( utils_string.dotate(codec.encode(response.result), 100) ) .. "'\n");
                     else
                         logger:error("Response to client '"  .. tostring( client ) ..  "' couldn't be sent: " .. tostring( send_result ) .. "\n");
                     end
@@ -138,7 +137,7 @@ end
 --- Sends internal data to Core, passed through by Common Node via internal_data event
 function data_send(data)
 
-  event.push("internal_data", data); -- TODO: data size and type etc.
+    event.push("internal_data", data); -- TODO: data size and type etc.
 
 end
 
@@ -151,14 +150,14 @@ end
 
 --- Handle program interruption. Every task depends on boolean 'running', so when running is false they automatically clean up and exit
 local function interrupt_handler()
-    
+
     while running do
-        
+
         event.pull("interrupted");
         running = false;
-        
+
     end
-    
+
 end
 
 --<< Threads end >>--

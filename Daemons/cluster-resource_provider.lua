@@ -217,7 +217,7 @@ function subscription_publish()
 
 
         -- TODO: check success of sending packet here?
-        Packet:create(
+        local send_success, send_result = Packet:create(
             modem.address,
             client,
             constants.port.logistics,

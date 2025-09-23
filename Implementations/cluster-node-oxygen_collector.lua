@@ -18,6 +18,7 @@ local graphics = require("cluster/graphics");
 local Logger = require("cluster/logger");
 local Packet = require("cluster/network_packet");
 local resources = require("cluster/resources");
+local utils_string = require("cluster/utils_string");
 
 local component = require("component");
 local computer = require("computer");
@@ -92,10 +93,11 @@ function data_handle(_, _packet_request)
     };
 
 
+
     local send_success, send_result = packet_request:send_response( response );
 
     if send_success then
-        logger:info("Response to client '"  .. tostring( client ) ..  "': '" .. tostring( response.success ) .. " - " .. tostring( response.result ) .. "'\n");
+        logger:info("Response to client '"  .. tostring( client ) ..  "': '" .. tostring( response.success ) .. " - " .. tostring( utils_string.dotate(codec.encode(response.result), 100) ) .. "'\n");
     else
         logger:error("Response to client '"  .. tostring( client ) ..  "' couldn't be sent: " .. tostring( send_result ) .. "\n");
     end

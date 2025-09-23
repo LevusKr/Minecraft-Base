@@ -82,6 +82,28 @@ function data_handle(_, _packet_request)
     };
 
 
+
+    local function handler_success(packet_response)
+        response.success, response.result = packet_response.data.success, packet_response.data.result; --- {"file_name"=true/false, ...} OR {"file_name"=*file content*} (depends on 'download' flag)
+    end
+
+    local function handler_failure(message)
+        response.success = false;
+        response.result = message or response.result;
+    end
+
+    local function handler_completion()
+        local send_success, send_result = packet_request:send_response( response );
+
+        if send_success then
+            logger:info("Response to client '"  .. tostring( client ) ..  "': '" .. tostring( response.success ) .. " - " .. tostring( utils_string.dotate(codec.encode(response.result), 100) ) .. "'\n");
+        else
+            logger:error("Response to client '"  .. tostring( client ) ..  "' couldn't be sent: " .. tostring( send_result ) .. "\n");
+        end
+    end
+
+
+
     if operation == "store" then
 
         nas.write(
@@ -93,32 +115,9 @@ function data_handle(_, _packet_request)
             true, --- async
             10 --- timeout
 
-        ):on_success(
-            function(packet_response)
-
-                response.success, response.result = packet_response.data.success, packet_response.data.result; --- {"file_name"=true/false, ...} OR {"file_name"=*file content*} (depends on 'download' flag)
-
-            end
-        ):on_failure(
-            function(message)
-
-                response.success = false;
-                response.result = message or response.result;
-
-            end
-        ):on_completion(
-            function()
-
-                local send_success, send_result = packet_request:send_response( response );
-
-                if send_success then
-                    logger:info("Response to client '"  .. tostring( client ) ..  "': '" .. tostring( response.success ) .. " - " .. tostring( utils_string.dotate(codec.encode(response.result), 100) ) .. "'\n");
-                else
-                    logger:error("Response to client '"  .. tostring( client ) ..  "' couldn't be sent: " .. tostring( send_result ) .. "\n");
-                end
-
-            end
-        );
+        ):on_success(handler_success)
+        :on_failure(handler_failure)
+        :on_completion(handler_completion);
 
     elseif operation == "retrieve" then
 
@@ -128,32 +127,9 @@ function data_handle(_, _packet_request)
             false, --- keep_open
             true, --- async
             10 --- timeout
-        ):on_success(
-            function(packet_response)
-
-                response.success, response.result = packet_response.data.success, packet_response.data.result;
-
-            end
-        ):on_failure(
-            function(message)
-
-                -- response.success = false;
-                response.result = message or response.result;
-
-            end
-        ):on_completion(
-            function()
-
-                local send_success, send_result = packet_request:send_response( response );
-
-                if send_success then
-                    logger:info("Response to client '"  .. tostring( client ) ..  "': '" .. tostring( response.success ) .. " - " .. tostring( utils_string.dotate(codec.encode(response.result), 100) ) .. "'\n");
-                else
-                    logger:error("Response to client '"  .. tostring( client ) ..  "' couldn't be sent: " .. tostring( send_result ) .. "\n");
-                end
-
-            end
-        );
+        ):on_success(handler_success)
+        :on_failure(handler_failure)
+        :on_completion(handler_completion);
 
     end
 

@@ -12,12 +12,14 @@ local file_telepad_controller = "/etc/telepad_register.cfg";
 --
 
 -- Libraries and components
+local codec = require("cluster/codec");
 local colors = require("cluster/colors-hex");
 local Config = require("cluster/config");
 local constants = require("cluster/constants");
 local graphics = require("cluster/graphics");
 local Logger = require("cluster/logger");
 local Packet = require("cluster/network_packet");
+local utils_string = require("cluster/utils_string");
 
 local component = require("component");
 local computer = require("computer");
@@ -134,7 +136,7 @@ function data_handle(_, _packet_request)
         end
 
 
-        gui_elements.log_events:log_add("Response: " .. tostring( response.success ) .. " : " .. tostring( response.result ));
+        gui_elements.log_events:log_add("Response: " .. tostring( response.success ) .. " - " .. tostring( utils_string.dotate(codec.encode(response.result), 15) ));
 
 
     elseif operation == "enable" then
@@ -168,7 +170,7 @@ function data_handle(_, _packet_request)
 
 
         telepad.setTargetAddress( payload );
-    
+
 
         gui_elements.log_events:log_add("Remote target set.");
         gui_elements.log_events:log_add("New target: " .. telepad_register_reverse[ payload ]);
@@ -176,28 +178,26 @@ function data_handle(_, _packet_request)
         response.success = true;
         response.result = "Target changed";
 
-        
+
     end
 
-  
 
-    Packet:create(
-        modem.address,
-        client,
-        packet_request.port,
-        constants.packet.response,
-        response
-    ):send();
-  
-    logger:info("Response to client '"  .. tostring( client ) ..  "': '" .. tostring( response.success ) .. " - " .. tostring( response.result ) .. "'\n");
+
+    local send_success, send_result = packet_request:send_response( response );
+
+    if send_success then
+        logger:info("Response to client '"  .. tostring( client ) ..  "': '" .. tostring( response.success ) .. " - " .. tostring( utils_string.dotate(codec.encode(response.result), 100) ) .. "'\n");
+    else
+        logger:error("Response to client '"  .. tostring( client ) ..  "' couldn't be sent: " .. tostring( send_result ) .. "\n");
+    end
 
 end
 
 --- Sends internal data to Core, passed through by Common Node via internal_data event
 function data_send(data)
-    
+
     event.push("internal_data", data); -- TODO: data size and type etc.
-    
+
 end
 
 --<< Data Handling end >>--
@@ -217,7 +217,7 @@ function display_setup()
 
     if not success then
 
-        logger:error("Telepad registry could not be loaded: " .. tostring( result ));
+        logger:error("Telepad registry couldn't be loaded: " .. tostring( result ));
 
         telepad_register = {};
 
@@ -293,16 +293,16 @@ function display_setup()
                 colors.border, --- Border
                 colors.black, --- Border background
                 colors.foreground, --- Border label
-                
+
                 function(self)
 
                     local address = telepad_register_numbered[ self.index ];
-    
+
                     telepad.setTargetAddress( address );
-    
-    
+
+
                     gui_elements.log_events:log_add("New destination: " .. telepad_register_reverse[ address ]);
-                    
+
                 end
             );
 
@@ -312,7 +312,7 @@ function display_setup()
             end
 
             gui_elements.container_main:child_add(gui_elements.list_targets);
-  
+
         --[[ DESTINATIONS LIST END ]]--
 
 
@@ -387,14 +387,14 @@ function display_setup()
 
 
             --[[ STATUS LABEL ]]--
-      
+
                 gui_elements.label_status = graphics.label(
                     label_x,
                     label_y / (label_spread / 2),
                     label_width,
                     label_height,
                     "Status: UNKNOWN",
-                    
+
                     label_color_background, --- Background
                     colors.foreground --- Label
                 );
@@ -408,14 +408,14 @@ function display_setup()
 
 
             --[[ TARGET STATUS LABEL ]]--
-      
+
                 gui_elements.label_status_target = graphics.label(
                     label_x,
                     label_y / (label_spread / 3),
                     label_width,
                     label_height,
                     "Target Status: UNKNOWN",
-                
+
                     label_color_background, --- Background
                     colors.foreground --- Label
                 );
@@ -430,7 +430,7 @@ function display_setup()
     --[[ GUI elements init end ]]--
 
 
-  
+
 
 
     --- Disable printing to avoid printing straight into gui, but allow the startup/shutdown logs to be printed (see display_stop)

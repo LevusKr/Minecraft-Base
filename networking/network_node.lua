@@ -69,9 +69,7 @@ end
 --- @param type constants Packet type
 --- @param data any Payload data
 --- 
---- @return boolean success
---- @return string packet_id Packet id for later referencing RESPONSE packet
---- @return string result
+--- @return boolean success, string result
 function Node:send(type, data, options)
 
     return Packet:create(
@@ -105,7 +103,7 @@ end
 --- Refreshes status and informs node of active connection by sending (usually as respond to previously received alive packet) alive packet
 --- @param options table Options TODO: defaults
 --- 
---- @return boolean success, string packet_id, string result
+--- @return boolean success, string result
 function Node:alive(options)
 
     options = options or {};

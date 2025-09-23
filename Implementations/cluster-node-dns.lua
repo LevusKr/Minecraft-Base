@@ -73,7 +73,7 @@ function data_handle(_, _packet_request)
 
     logger:info("Client '" .. tostring( select(2, operations.query( client )) or client ) .. "' requested '" .. tostring( operation ) .. "' on '" .. tostring( entry ) .. "'" .. (option and (" with option '" .. tostring(option) .. "'") or ""));
 
-    
+
 
     local response = {
         success = false,
@@ -84,16 +84,14 @@ function data_handle(_, _packet_request)
     response.success, response.result = operations[ operation ](entry, address, option);
 
 
-    
-    Packet:create(
-        modem.address,
-        client,
-        packet_request.port,
-        constants.packet.response,
-        response
-    ):send();
 
-    logger:info("Response to client '"  .. tostring( select(2, operations.query( client )) or client ) ..  "': '" .. tostring( response.success ) .. " - " .. tostring( response.result ) .. "'\n");
+    local send_success, send_result = packet_request:send_response( response );
+
+    if send_success then
+        logger:info("Response to client '"  .. tostring( client ) ..  "': '" .. tostring( response.success ) .. " - " .. tostring( response.result ) .. "'\n");
+    else
+        logger:error("Response to client '"  .. tostring( client ) ..  "' couldn't be sent: " .. tostring( send_result ) .. "\n");
+    end
 
 end
 

@@ -108,15 +108,13 @@ function data_handle(_, _packet_request)
 
 
 
-    Packet:create(
-        modem.address,
-        client,
-        packet_request.port,
-        constants.packet.response,
-        response
-    ):send();
+    local send_success, send_result = packet_request:send_response( response );
 
-    logger:info("Response to client '"  .. tostring( client ) ..  "': '" .. tostring( response.success ) .. " - " .. tostring( response.result ) .. "'\n");
+    if send_success then
+        logger:info("Response to client '"  .. tostring( client ) ..  "': '" .. tostring( response.success ) .. " - " .. tostring( response.result ) .. "'\n");
+    else
+        logger:error("Response to client '"  .. tostring( client ) ..  "' couldn't be sent: " .. tostring( send_result ) .. "\n");
+    end
 
 
 
@@ -212,7 +210,7 @@ function display_setup()
         --[[ TOGGLE BUTTON ]]--
 
             --- Callback for toggle button
-            local button_toggle_callback = function(self, x, y, button, user)
+            local function button_toggle_callback(self, x, y, button, user)
 
                 local success, result = toggle();
 

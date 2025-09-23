@@ -235,16 +235,23 @@ function override_network()
                 --- Finally retrieve valid address from dns cache, which optionally queries dns server (see dns-library)
                 success, response = dns.lookup( receiver );
 
+                --- Return here and don't just invoke modem with a 'receiver' that is known to be no real modem address
+                --- Otherwise and previously, this would return true after apparently sending the modem message successfully
+                --- and only notify about the error via event#onError, which makes it hard to recognize a dns-server error at runtime
                 if not success then
 
-                    event.onError("Unable to resolve hostname '" .. tostring( receiver ) .. "': " .. tostring( response ));
+                    local message_error = "Unable to resolve hostname '" .. tostring( receiver ) .. "': " .. tostring( response );
+
+                    event.onError( message_error );
+
+                    return false, message_error;
 
                 end
 
             end
 
 
-            --- If response is anything but nil, replace hostname with an valid address in modem.send's arguments
+            --- If response is anything but nil, replace hostname with a valid modem address in modem.send's arguments
             args[1] =
                 response ~= nil
                 and response

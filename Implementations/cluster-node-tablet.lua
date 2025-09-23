@@ -107,17 +107,15 @@ local function data_handle(_, _packet_request)
 
     end
 
-    
-    
-    Packet:create(
-        modem.address,
-        client,
-        packet_request.port,
-        constants.packet.response,
-        response
-    ):send();
 
-    logger:info("Response to client '"  .. tostring( client ) ..  "': '" .. tostring( response.success ) .. " - " .. tostring( response.result ) .. "'\n");
+
+    local send_success, send_result = packet_request:send_response( response );
+
+    if send_success then
+        logger:info("Response to client '"  .. tostring( client ) ..  "': '" .. tostring( response.success ) .. " - " .. tostring( utils_string.dotate(codec.encode(response.result), 100) ) .. "'\n");
+    else
+        logger:error("Response to client '"  .. tostring( client ) ..  "' couldn't be sent: " .. tostring( send_result ) .. "\n");
+    end
 
 end
 
@@ -230,7 +228,7 @@ function display_setup()
                 colors.border, --- Border
                 colors.black, --- Border background
                 colors.foreground, --- Border label
-                
+
                 function(self)
 
                     -- TODO: mark current node as selected (for later opening menu belonging to selected node)
@@ -240,7 +238,7 @@ function display_setup()
                     };
 
                     gui_elements.log_events:log_add("Node selected: " .. tostring( node_selected.name ));
-                    
+
                 end
             );
 
@@ -252,7 +250,7 @@ function display_setup()
 
 
             gui_elements.container_main:child_add( gui_elements.list_nodes );
-  
+
         --[[ NODES LIST END ]]--
 
 
@@ -327,14 +325,14 @@ function display_setup()
 
 
             --[[ ADDRESS LABEL ]]--
-      
+
                 gui_elements.label_address = graphics.label(
                     label_x,
                     label_y / (label_spread / 1),
                     label_width,
                     label_height + 1,
                     "Address:\nN/A",
-                
+
                     label_color_background, --- Background
                     colors.foreground, --- Label
                     "CENTER", --- Alignment
@@ -346,18 +344,18 @@ function display_setup()
 
             --[[ ADDRESS LABEL END ]]--
 
-            
-            
-            
+
+
+
             --[[ STATUS LABEL ]]--
-      
+
                 gui_elements.label_status = graphics.label(
                     label_x,
                     label_y / (label_spread / 2),
                     label_width,
                     label_height,
                     "Status: N/A",
-                    
+
                     label_color_background, --- Background
                     colors.foreground --- Label
                 );
@@ -370,14 +368,14 @@ function display_setup()
 
 
             --[[ DATA LABEL ]]--
-      
+
                 gui_elements.label_data = graphics.label(
                     label_x,
                     label_y / (label_spread / 3),
                     label_width,
                     label_height,
                     "Data: N/A",
-                
+
                     label_color_background, --- Background
                     colors.foreground, --- Label
 
@@ -399,6 +397,42 @@ function display_setup()
 
             --[[ REBOOT BUTTON ]]--
 
+                local function button_reboot_callback(self)
+
+                    if not node_selected then
+                        return;
+                    end
+
+
+                    local send_success, send_result = Packet:create(
+                        modem.address,
+                        node_selected.address,
+                        constants.port.main,
+                        constants.packet.disconnect,
+                        {
+                            reason = "Remote reboot",
+                            reboot = true
+                        }
+                    ):send();
+
+                    if send_success then
+                        gui_elements.log_events:log_add("Node rebooted: " .. tostring( node_selected.name ));
+                    else
+                        gui_elements.log_events:log_add("Node couldn't be rebooted: " .. tostring( send_result ));
+                    end
+
+
+                    self:redraw();
+
+                    event.timer(1.5, function()
+
+                        self.status = false;
+                        self:redraw();
+
+                    end, 1); -- TODO: do this in library already
+
+                end
+
                 gui_elements.button_reboot = graphics.button(
                     label_x,
                     label_y / (label_spread / 4),
@@ -410,34 +444,11 @@ function display_setup()
                     colors.green, --- Selected
                     colors.foreground, --- Label
 
-                    function(self)
-
-                        Packet:create(
-                            modem.address,
-                            node_selected.address,
-                            constants.port.main,
-                            constants.packet.disconnect,
-                            {
-                                reason = "Remote Reboot",
-                                reboot = true
-                            }
-                        ):send();
-                        
-                            
-                        self:redraw();
-    
-                        event.timer(2.5, function()
-    
-                            self.status = false;
-                            self:redraw();
-    
-                        end, 1); -- TODO: do this in library already
-
-                    end
+                    button_reboot_callback
                 );
 
                 gui_elements.container_control:child_add( gui_elements.button_reboot );
-                
+
             --[[ REBOOT BUTTON END ]]--
 
         --[[ CONTROL CONTAINER END ]]--
@@ -445,7 +456,7 @@ function display_setup()
     --[[ GUI elements init end ]]--
 
 
-  
+
 
 
     --- Disable printing to avoid printing straight into gui, but allow the startup/shutdown logs to be printed (see display_stop)
@@ -458,6 +469,10 @@ function display_setup()
 
     --- Draw all elements to screen for the very first time and build tree
     gui_elements.container_main:init();
+
+
+    gpu.bitblt();
+    gpu.setActiveBuffer( buffer );
 
 end
 
@@ -589,7 +604,7 @@ function display_draw()
             queue_redraw[ #queue_redraw + 1 ] = "list_nodes";
 
         --[[ NODES LIST END ]]--
-    
+
 
 
 
@@ -604,16 +619,16 @@ function display_draw()
 
 
         --[[ CONTROL CONTAINER ]]--
-        
+
             for i, child in pairs( gui_elements.container_control.children ) do
 
                 if child.type == "Border" then
 
                     local border = child;
-                    
+
                     --- Retrieve border's label and update name of selected node
                     border.children[1].text = "Control: " .. tostring(node_name or "N/A");
-            
+
                 end
 
             end
@@ -625,43 +640,43 @@ function display_draw()
 
 
             --[[ ADDRESS LABEL ]]--
-        
+
                 gui_elements.label_address.text = "Address:\n" .. utils_string.dotate(tostring( node_address ) or "N/A", gui_elements.label_address.width);
-        
+
                 --gui_elements.label_address:redraw();
                 queue_redraw[ #queue_redraw + 1 ] = "label_address";
-    
+
             --[[ ADDRESS LABEL END ]]--
 
 
 
-        
+
             --[[ STATUS LABEL ]]--
 
                 gui_elements.label_status.text = "Status: " .. tostring(node_status.status or "N/A");
                 gui_elements.label_status.color_label = node_status.color;
-        
+
                 --gui_elements.label_status:redraw();
                 queue_redraw[ #queue_redraw + 1 ] = "label_status";
-        
+
             --[[ STATUS LABEL END ]]--
 
 
 
 
             --[[ DATA LABEL ]]--
-        
+
                 gui_elements.label_data.text = "Data: " .. utils_string.dotate(codec.encode( node_data ) or "N/A", gui_elements.label_data.width);
-        
+
                 --gui_elements.label_data:redraw();
                 queue_redraw[ #queue_redraw + 1 ] = "label_data";
-    
+
             --[[ DATA LABEL END ]]--
 
         --[[ CONTROL CONTAINER END ]]--
 
 
-        
+
         --- Collectively redraw elements
         --gui_elements.container_main:redraw();
         for i, element in pairs( queue_redraw ) do
@@ -674,7 +689,6 @@ function display_draw()
 
 
     gpu.bitblt();
-    gpu.setActiveBuffer( 0 );
     gpu.setActiveBuffer( buffer );
 
 end
@@ -751,16 +765,16 @@ end
 function startup()
 
     local time_startup = computer.uptime();
-  
+
 
     running = true;
 
     hostname = utils.internal.hostname();
 
     init_log();
-    
 
-  
+
+
     term.clear();
     logger:info("----- STARTUP -----", false);
     logger:info("Starting up...\n");
@@ -833,7 +847,7 @@ function startup()
 
     logger:info("Done.\n ");
     --- Start threads end
-        
+
 
 
     --- Setup GUI
@@ -851,12 +865,14 @@ function startup()
 
     local time_startup_finished = computer.uptime() - time_startup;
     logger:info("Successfully started up in " .. time_startup_finished .. " seconds.\n\n");
+
 end
 
 --- Main shutdown function, executed once at shutdown
 function shutdown()
+
     local time_shutdown = computer.uptime();
-  
+
 
     logger:info("----- SHUTDOWN -----", false);
     logger:info("Shutting down...\n");
@@ -894,9 +910,9 @@ function shutdown()
 
     logger:info("Done.\n");
     --- Stop loop end
-    
 
-    
+
+
     --- Stop GUI
     logger:info("Stopping GUI...");
 
