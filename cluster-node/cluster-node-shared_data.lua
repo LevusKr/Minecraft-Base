@@ -131,7 +131,7 @@ function shared_data.retrieve_keys()
 
             local message_error = "Could not retrieve and/or generate local key pair. Encryption is unavailable: " .. tostring( key_public );
 
-            event.onError( message_error );
+            -- event.onError( message_error );
 
             return false, message_error;
 

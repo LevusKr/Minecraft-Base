@@ -113,8 +113,6 @@ function perform_handshake()
 
         logger:error("Handshake with core failed: " .. tostring(result or "Timed out"));
 
-        event.onError("Handshake with core failed: " .. tostring(result or "Timed out"));
-
     end
 
 
@@ -184,8 +182,6 @@ function perform_register()
         -- TODO: if registering was not successful, shutdown cluster-node daemon?
 
         logger:error("Registering at core failed: " .. tostring(result or "Timed out"));
-
-        event.onError("Registering at core failed: " .. tostring(result or "Timed out"));
 
     end
 

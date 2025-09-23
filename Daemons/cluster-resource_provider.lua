@@ -8,11 +8,12 @@
 
 
 -- Files and Configurations
+local name_log = "resource-provider";
 --
 
 -- Libraries and components
-local codec  = require("cluster/codec")
 local constants = require("cluster/constants");
+local logger = require("cluster/logger");
 local resources = require("cluster/resources");
 local Packet = require("cluster/network_packet");
 
@@ -56,7 +57,7 @@ function data_handle(_, _packet_request)
     local operation = packet_request.data.operation;
     local attributes = packet_request.data.payload;
 
-    event.onError("Client '" .. tostring( client ) .. "' requested '" .. tostring( operation ) .. "' with payload '" .. tostring( attributes ) .. "'");
+    logger.temporary(name_log, "Client '" .. tostring( client ) .. "' requested '" .. tostring( operation ) .. "' with payload '" .. tostring( attributes ) .. "'");
 
 
 
@@ -160,9 +161,9 @@ function data_handle(_, _packet_request)
     local send_success, send_result = packet_request:send_response( response );
 
     if send_success then
-        event.onError("Response to client '"  .. tostring( client ) ..  "': '" .. tostring( response.success ) .. " - " .. tostring( response.result ) .. "'\n");
+        logger.temporary(name_log, "Response to client '"  .. tostring( client ) ..  "': '" .. tostring( response.success ) .. " - " .. tostring( response.result ) .. "'\n");
     else
-        event.onError("Response to client '"  .. tostring( client ) ..  "' couldn't be sent: " .. tostring( send_result ) .. "\n");
+        logger.temporary(name_log, "Response to client '"  .. tostring( client ) ..  "' couldn't be sent: " .. tostring( send_result ) .. "\n");
     end
 
 end
@@ -253,7 +254,7 @@ function start()
     timer_publish = event.timer(interval_publish, subscription_publish, math.huge);
 
 
-    event.onError("Resource Provider started.");
+    logger.temporary(name_log, "Resource Provider started.");
 
 end
 
@@ -265,7 +266,7 @@ function stop()
     event.cancel( timer_publish );
 
 
-    event.onError("Resource Provider stopped.");
+    logger.temporary(name_log, "Resource Provider stopped.");
 
 end
 

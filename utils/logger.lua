@@ -84,6 +84,18 @@ function Logger.create(name, path, print, print_debug, print_verbose, buffer_ena
 
 end
 
+--- Multi-purpose equivalent of event#onError. Writes given 'message' into file at '/tmp/${name}'
+function Logger.temporary(name, message)
+
+    local file = io.open("/tmp/" .. tostring( name ) .. ".log", "a");
+
+    if file then
+        pcall(file.write, file, tostring( message ), "\n");
+        file:close();
+    end
+
+end
+
 
 --- Log given message at given level, optionally print to screen
 function Logger:log(level, _message, print, write_func)
@@ -185,74 +197,6 @@ function Logger:verbose(message, print)
 end
 
 
---- Rotate log files. Note: By default, this closes the log file
-function Logger:rotate(options)
-
-    options = options or {};
-    options.close = options.close ~= nil and options.close or true;
-
-
-    if not component.isAvailable("data") then
-
-        return false, "No data card available";
-
-    end
-
-
-    if options.close then
-
-        self:close( { rotate = false } ); --- Flushes and closes the file, but avoids cyclic call of #rotate
-
-    end
-
-
-    local file_current_path = self.path;
-
-    
-    --- If current file is larger than 16,384 Bytes, compress it into archive and clear current file
-    --- This technically checks for existance of a file at given path already, so we can use utils-file#_read
-    if file_current_path ~= nil and (filesystem.size( file_current_path ) > 16384) then
-
-        event.onError("[" .. self.name .. ":" .. file_current_path .. "] Rotating...");
-
-
-        local data_current_compressed = component.data.deflate( utils_file._read( file_current_path ) );
-        
-        local file_compressed_identifier = tostring( utils.math.round( os.time() ) ); --- Unique time identifier
-
-        local file_compressed_path = file_current_path:gsub("%.log", "_"..file_compressed_identifier..".log"); --- Replace '.log' suffix with '_$file_compressed_identifier.log'
-
-        -- TODO: use proper utils_file#read implementation? only case could be an already existing path/timestamp since minecraft time is not necessarily consistent
-        utils_file._write(file_compressed_path, data_current_compressed, _, true); --- Save compressed archived log file
-        utils_file._write(file_current_path, ""); --- Clear original log file
-
-
-        event.onError("[" .. self.name .. ":" .. file_current_path .. "] Rotating suceeded. " .. file_compressed_path);
-
-        return true, file_compressed_path;
-        
-    end
-
-
-    return false, file_current_path;
-
-end
-
---- Transfer log file to Log-Server via the Log-Library
-function Logger:transfer(options)
-
-    options = options or {};
-
-    options.name = options.name or self.name;
-    options.path = options.path or self.path; --- This allows rotated files to be transfered as well
-
-
-    self:flush();
-
-    return log.transfer( options );
-
-end
-
 --- Flush buffer to file
 function Logger:flush()
 
@@ -289,6 +233,74 @@ function Logger:close(options)
 
 
     return self.file and self.file:close() or true; -- TODO: return true even if we didn't explicitly closed the file (because it was closed/nil already)
+
+end
+
+--- Rotate log files. Note: By default, this closes the log file
+function Logger:rotate(options)
+
+    options = options or {};
+    options.close = options.close ~= nil and options.close or true;
+
+
+    if not component.isAvailable("data") then
+
+        return false, "No data card available";
+
+    end
+
+
+    if options.close then
+
+        self:close( { rotate = false } ); --- Flushes and closes the file, but avoids cyclic call of #rotate
+
+    end
+
+
+    local file_current_path = self.path;
+
+
+    --- If current file is larger than 16,384 Bytes, compress it into archive and clear current file
+    --- This technically checks for existance of a file at given path already, so we can use utils-file#_read
+    if file_current_path ~= nil and (filesystem.size( file_current_path ) > 16384) then
+
+        event.onError("[" .. self.name .. ":" .. file_current_path .. "] Rotating...");
+
+
+        local data_current_compressed = component.data.deflate( utils_file._read( file_current_path ) );
+
+        local file_compressed_identifier = tostring( utils.math.round( os.time() ) ); --- Unique time identifier
+
+        local file_compressed_path = file_current_path:gsub("%.log", "_"..file_compressed_identifier..".log"); --- Replace '.log' suffix with '_$file_compressed_identifier.log'
+
+        -- TODO: use proper utils_file#read implementation? only case could be an already existing path/timestamp since minecraft time is not necessarily consistent
+        utils_file._write(file_compressed_path, data_current_compressed, _, true); --- Save compressed archived log file
+        utils_file._write(file_current_path, ""); --- Clear original log file
+
+
+        event.onError("[" .. self.name .. ":" .. file_current_path .. "] Rotating suceeded. " .. file_compressed_path);
+
+        return true, file_compressed_path;
+
+    end
+
+
+    return false, file_current_path;
+
+end
+
+--- Transfer log file to Log-Server via the Log-Library
+function Logger:transfer(options)
+
+    options = options or {};
+
+    options.name = options.name or self.name;
+    options.path = options.path or self.path; --- This allows rotated files to be transfered as well
+
+
+    self:flush();
+
+    return log.transfer( options );
 
 end
 
