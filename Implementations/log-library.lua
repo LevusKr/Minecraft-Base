@@ -12,16 +12,11 @@ local PATH_LOG_REMOTE = "/var/log/";
 -- Libraries and components
 local constants = require("cluster/constants");
 local Packet = require("cluster/network_packet");
-local utils = require("cluster/utils");
 local utils_file = require("cluster/utils-file");
 
 local component = require("component");
 local event = require("event");
 local filesystem = require("filesystem");
-local os = require("os");
-
-
-local modem = component.modem;
 --
 
 -- Variables and Constants

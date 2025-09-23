@@ -288,7 +288,7 @@ function display_setup()
     --[[ GUI elements init end ]]--
 
 
-  
+
 
 
     --- Disable printing to avoid printing straight into gui, but allow the startup/shutdown logs to be printed (see display_stop)
