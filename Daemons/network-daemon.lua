@@ -134,7 +134,8 @@ function handle_message(_, sender, _, _, _, message, is_compressed, is_encrypted
 
         if packet.type == constants.packet.response then
 
-            event.push("packet_response_"..(packet.data and packet.data.id), packet:encode());
+			-- TODO: handle malformed RESPONSE packets here, i.e. when no data and thus no response id is present
+            event.push("packet_response_"..tostring(packet.data and packet.data.id), packet:encode());
 
         else
 
@@ -224,7 +225,12 @@ function override_network()
                     response = address_core;
                     skip_lookup = true;
 
-                end
+                else
+
+					response = network.address( receiver );
+					skip_lookup = response ~= nil;
+
+				end
 
             end
 

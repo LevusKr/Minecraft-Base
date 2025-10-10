@@ -44,17 +44,24 @@ function network.config()
 
 end
 
---- Retrieve configured dns server from network config
+--- Retrieve configured dns server address from network config
 function network.address_dns()
 
     return config_network:get("address_dns", {reload = true});
 
 end
 
---- Retrieve configured core server from network config
+--- Retrieve configured core server address from network config
 function network.address_core()
 
     return config_network:get("address_core", {reload = true});
+
+end
+
+--- Retrieve configured server address from network config
+function network.address(name)
+
+    return config_network:get(name, {reload = false});
 
 end
 
