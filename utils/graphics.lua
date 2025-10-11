@@ -1317,9 +1317,9 @@ function graphics.histogram_vertical(x, y, width, height, value_max, value_unit,
         local scaling_y = self.height / self.value_max; --- Y-axis-length / maximum value = n pixels per value
         local bar_width = scaling_x; --- Width of single value-bar
 
-        local value_current = self.values[ 1 ] or 0;
+        value_current = self.values[ 1 ] or 0;
 
-        --- Copies previous bars to the left, avoids redrawing whole values table (see for-loop below) since old values usually don't change
+        --- Copies previous bars to the left, avoids redrawing whole values table (see commented for-loop below) since old values usually don't change
         gpu.copy(
             x_graph + 1, self.y, width_graph, self.height,
             -1, 0
@@ -1344,7 +1344,7 @@ function graphics.histogram_vertical(x, y, width, height, value_max, value_unit,
                 value_current_y = scaling_y * value_current; --- Calculate label's y-pos for most recent value (so label sits at y-pos of most recent value's graph bar)
             end
 
-            --- Fill areas between bar top and bottom of graph with color_data (draws bars from top to bottom)
+            --- Fill areas between bar top and bottom of graph with color_data (draws actual bars from top to bottom, not only y-coordinates)
             gpu.setBackground( self.color_data );
             gpu.fill(bar_x, bar_y, bar_width, math.ceil( bar_height ), " ");
 

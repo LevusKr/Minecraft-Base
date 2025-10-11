@@ -556,8 +556,8 @@ function startup()
 
     logger:info("Done.\n");
     --- Check for connection end
-  
-  
+
+
 
     --- Configure modem
     logger:info("Configuring modem...");
@@ -621,7 +621,7 @@ end
 --- Main shutdown function, executed once at shutdown
 function shutdown()
     local time_shutdown = computer.uptime();
-  
+
 
     logger:info("----- SHUTDOWN -----", false);
     logger:info("Shutting down...\n");
