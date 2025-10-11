@@ -57,8 +57,12 @@ local publishing = false;
 
 local timer_loop = 0;
 local thread_interrupt_handler = nil;
+
 local thread_packet_processor = nil;
+local packet_processor_interval = 0.2; --- Seconds between runs
+
 local thread_alive_processor = nil;
+local alive_processor_interval = 0.2; --- Seconds between runs
 --
 
 -- Data tables
@@ -698,7 +702,7 @@ local function packet_processor()
 
     while running do
 
-        os.sleep(0.2);
+        os.sleep( packet_processor_interval );
 
         --- If packet available, pull it
         if next( packet_queue ) then
@@ -749,7 +753,7 @@ local function alive_processor()
 
     while running do
 
-        os.sleep(0.2);
+        os.sleep( alive_processor_interval );
 
         for _, node in pairs( nodes.contents ) do
 
@@ -771,6 +775,7 @@ local function alive_processor()
                 logger:info("Node '" .. name .. "' didn't respond in time. Sent alive packet.");
 
 
+                -- TODO: "deactivation" is ambigious
                 send_packet_event(
                     "*",
                     constants.event.node_deactivated,
@@ -782,7 +787,7 @@ local function alive_processor()
 
             end
 
-            --- If node is marked as connected but ttl is reached, wait 'constants.ttl.node' longer before fully disconnecting
+            --- If node is marked as connected but alive timout is reached, wait 'constants.ttl.node' longer before fully disconnecting
             if connected and (ttl + constants.ttl.node < computer.uptime()) then
 
                 node:reboot("Timed out");
@@ -841,66 +846,138 @@ end
 --- Initialize terminal
 local function init_terminal()
 
-    logger:info(tostring(logger.log))
+    logger:debug("To-be overriden log function" .. tostring( logger.log ))
 
     terminal = Terminal.create("cluster-core", logger);
 
 end
 
 local command_map = {
-    ["stop"] = {},
-    ["exit"] = {},
-    ["quit"] = {},
-    ["q"] = {},
-    ["e"] = {},
-    ["memory"] = {},
-    ["mem"] = {},
-    ["clear"] = {},
-    ["node"] = {
-        ["list"] = {},
-        ["stop"] = {},
+    stop = {
+        description = "Stop the Core.",
+        --usage = "stop",
+        aliases = {
+            "exit",
+            "quit",
+            "e",
+            "q"
+        }
+    },
+
+    memory = {
+        description = "Show memory usage.",
+        --usage = "memory",
+        aliases = {
+            "mem"
+        }
+    },
+
+    clear = {
+        description = "Clear terminal.",
+        --usage = "clear",
+        aliases = {
+            "cl"
+        }
+    },
+
+    node = {
+        -- TODO: support the following structure by differentiating command data from subcommands
         ["<node>"] = {
-            ["list"] = {},
-            ["ls"] = {},
-            ["info"] = {},
-            ["status"] = {},
-            ["start"] = {},
-            ["boot"] = {},
-            ["wakeup"] = {},
-            ["wake"] = {},
-            ["stop"] = {},
-            ["shutdown"] = {},
-            ["reboot"] = {},
-            ["restart"] = {},
-            ["rb"] = {},
-            ["disconnect"] = {}
+            info = {
+                aliases = {
+                    "status"
+                }
+            },
+
+            start = {},
+
+            stop = {},
+
+            restart = {},
+
+            connect = {},
+
+            disconnect = {}
         }
     }
 };
+--- Add name and add aliases to command map for quick reference without iterating all commands everytime
+for command, command_data in pairs( command_map ) do
 
-local function command_handler(command)
+    if type( command_data ) ~= "table" then
+        return;
+    end
 
-    if not command or command == "" then
+    command_map[ command ].name = command;
+    --- If no usage is defined, set usage to command name
+    command_map[ command ].usage = command_map[ command ].usage ~= nil and command_map[ command ].usage or command;
+
+    for _, alias in pairs( command_data.aliases ) do
+        ---@diagnostic disable-next-line: assign-type-mismatch
+        command_map[ alias ] = command;
+    end
+
+
+    --- Add usage of 'node' command and it's present subcommands to command map
+    if command == "node" then
+        local usage_node = "node <all|$node> [";
+
+        for subcommand, _ in pairs( command_data["<node>"] ) do
+            usage_node = usage_node .. subcommand .. "|";
+
+            --- If no usage is defined, set usage to command name
+            if command_data["<node>"][subcommand].usage == nil then
+                command_data["<node>"][subcommand].usage = "node <all|$node> " .. subcommand;
+            end
+        end
+
+        command_map["node"].usage = usage_node:sub(1, #usage_node - 1) .. "]";
+    end
+
+end
+
+local function command_handler(command_string)
+
+    if not command_string or command_string == "" then
         return;
     end
 
 
-    local commands = utils_string.split( command );
+    local commands = utils_string.split( command_string );
 
     logger:debug("Command received: " .. serialization.serialize( commands ));
 
+    local command = commands[1];
+    local command_data = command_map[ command ];
 
-    if commands[1] == "stop"
-        or commands[1] == "quit"
-        or commands[1] == "exit"
-        or commands[1] == "q"
-        or commands[1] == "e" then
+    if not command_data then
+        return logger:error("Command '" .. tostring( command ) .. "' not found.");
+    end
+
+    --- If the command is an alias, use the actual command for further processing
+    if type( command_data ) == "string" then
+        command = command_data;
+        command_data = command_map[ command ];
+    end
+
+
+    if command == "help" then
+
+        -- TODO: display general help message
+
+        if #commands > 1 then
+
+            logger:info(command_data.description);
+            logger:info("Aliases: " .. serialization.serialize( command_data.aliases ));
+
+        end
+
+    elseif command == "stop" then
 
         logger:warn("Exiting...");
         running = false;
 
-    elseif commands[1] == "memory"
-        or commands[1] == "mem" then
+    elseif command == "memory" then
 
         logger:info("Memory Usage: " .. tostring(computer.usedMemory()/1000).. "/" .. tostring(computer.totalMemory()/1000) .. " KB ("
             .. string.format("%.2f", tostring(computer.usedMemory()/computer.totalMemory()*100)) .. "%)");
@@ -912,11 +989,11 @@ local function command_handler(command)
                 .. string.format("%.2f", tostring(computer.usedMemory()/computer.totalMemory()*100)) .. "%)");
         end
 
-    elseif commands[1] == "clear" then
+    elseif command == "clear" then
 
         terminal:clear();
 
-    elseif commands[1] == "node" then
+    elseif command == "node" then
 
         if commands[2] == "list" then
 
@@ -1041,15 +1118,18 @@ local function command_handler(command)
 
         else
 
-            logger:error("Node '" .. tostring(_node) .. "' not found.");
+            logger:error("Node '" .. tostring( _node ) .. "' not found.");
 
         end
 
     else
 
-        logger:error("Command '" .. tostring(command) .. "' not found.");
+        logger:error("Command '" .. tostring( command_string ) .. "' not found.");
 
     end
+
+
+    return true;
 
 end
 
@@ -1074,9 +1154,11 @@ local function tab_completer(command_line, position)
     local function find_suggestions(map, prefix)
         local result = {};
 
-        for key, _ in pairs(map) do
+        for key, value in pairs(map) do
             if key:sub(1, #prefix) == prefix then
-                table.insert(result, key);
+                --- If the value is a string, use it instead of the matching key
+                -- TODO: this autocompletes command aliases to the parent command, should we be doing this? better to fix command_handler
+                table.insert(result, type(value) == "string" and value or key);
             end
         end
 
