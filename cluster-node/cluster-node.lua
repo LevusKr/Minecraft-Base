@@ -259,7 +259,7 @@ local function init_log()
 
     end
 
-    
+
     shared_data.logger = logger_init_result;
     logger = logger_init_result;
 
