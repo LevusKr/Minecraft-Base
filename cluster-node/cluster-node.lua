@@ -27,23 +27,11 @@ local modem = shared_data.modem;
 -- Variables and constants
 local logger = shared_data.logger;
 
-local hostname = shared_data.hostname;
-local message_wake = shared_data.message_wake;
-
-
-local running = shared_data.running;
-local handshaked = shared_data.handshaked;
-local registered = shared_data.registered;
-local connected = shared_data.connected;
-local publishing = shared_data.publishing;
-
-
 local timer_loop = 0;
 --
 
 -- Data tables
 local packet_handler = packet_handling.packet_handler; --- Packet handlers for packet types (e.g. packet_handler.HANDSHAKE for handshake packets)
-shared_data.packet_handler = packet_handler; --- Set 'shared_data.packet_handler' here to remove shared_data's dependency on 'packet_handling' (cyclic dependency)
 --
 
 
@@ -296,7 +284,6 @@ function start()
 
     local time_startup = computer.uptime();
 
-
     shared_data.update_var_running( true );
 
     init_log();
@@ -322,8 +309,8 @@ function start()
         modem.open( constants.port.main );
             logger:info("Modem port 'MAIN:" .. constants.port.main .. "' opened.\n");
 
-        modem.setWakeMessage( message_wake );
-            logger:info("Modem wake-up message set to '" .. message_wake .. "'.");
+        modem.setWakeMessage( shared_data.message_wake );
+            logger:info("Modem wake-up message set to '" .. shared_data.message_wake .. "'.");
 
     logger:info("Done.\n");
     --- Configure modem end
@@ -375,9 +362,10 @@ function start()
     --- Start loop
     logger:info("Starting loop...");
 
-        timer_loop = event.timer(5, loop, math.huge);
+        timer_loop = event.timer(shared_data.loop_interval, loop, math.huge);
 
     logger:info("Done.\n");
+    --- Start loop end
 
 
 
@@ -386,6 +374,7 @@ function start()
 
     logger:info("Done.\n ");
     --- Start threads end
+
 
 
 
@@ -447,6 +436,7 @@ function stop()
 
 
 
+
     local time_shutdown_finished = computer.uptime() - time_shutdown;
     logger:info("Successfully shut down in " .. time_shutdown_finished .. " seconds.");
 
@@ -466,10 +456,29 @@ function stop()
     --- If rotating suceeded, returned file 'result_rotate' is compressed file to-be transfered
     if success_rotate then
 
+        logger:info("Logger file has been rotated. Transfering...")
+
+
         local success_transfer, result_transfer = logger:transfer( { path = result_rotate } );
-            
+
+        if success_transfer then
+
+            logger:info("Transfer succeeded.");
+
+        else
+
+            logger:error("Transfer failed: " .. tostring( result_transfer ));
+
+        end
+
+    else
+
+        logger:error("Logger file could not be rotated: " .. tostring( result_rotate ));
+
     end
 
+
+    shared_data.update_var_running( false );
 
     os.exit(0);
 

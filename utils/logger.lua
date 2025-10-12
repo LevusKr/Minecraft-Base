@@ -240,7 +240,10 @@ end
 function Logger:rotate(options)
 
     options = options or {};
-    options.close = options.close ~= nil and options.close or true;
+
+    if options.close == nil then
+        options.close = true;
+    end
 
 
     if not component.isAvailable("data") then
@@ -252,7 +255,8 @@ function Logger:rotate(options)
 
     if options.close then
 
-        self:close( { rotate = false } ); --- Flushes and closes the file, but avoids cyclic call of #rotate
+        -- TODO: possible error cause when using curly brackets on : func call
+        self:close{ rotate = false }; --- Flushes and closes the file, but avoids cyclic call of #rotate
 
     end
 

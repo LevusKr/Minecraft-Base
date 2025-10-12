@@ -295,4 +295,5 @@ end
 
 --- Return library table
 packet_handling.packet_handler = packet_handler;
+shared_data.packet_handler = packet_handler; --- Set 'shared_data.packet_handler' here to remove shared_data's dependency on 'packet_handling' (cyclic dependency)
 return packet_handling;

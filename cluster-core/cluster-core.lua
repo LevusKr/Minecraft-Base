@@ -7,70 +7,57 @@
 
 
 -- Files and Configurations
-local file_log = "/var/log/cluster/core-%s.log";
-local file_log_num = "/var/log/cluster/core-num";
+-- local file_log = "/var/log/cluster/core-%s.log";
 
-local file_nodes = "/etc/nodes.cfg";
+-- local file_nodes = "/etc/nodes.cfg";
 --
 
 -- Libraries and Components
+local shared_data = require("cluster/core/shared_data");
+local command_handling = require("cluster/core/command_handling");
+
 local codec = require("cluster/codec");
 local Config = require("cluster/config");
 local constants = require("cluster/constants");
 local dns = require("cluster/dns-library");
-local _event = require("cluster/event");
 local Logger = require("cluster/logger");
-local network = require("cluster/network");
 local Node = require("cluster/network_node");
 local Packet = require("cluster/network_packet");
 local Terminal = require("cluster/terminal");
-local utils_string = require("cluster/utils-string");
 local utils_crypt = require("cluster/utils-crypt");
 
 local component = require("component");
 local computer = require("computer");
 local event = require("event");
 local os = require("os");
-local serialization = require("serialization");
-local term = require("term");
 local thread = require("thread");
 
-local modem = component.modem;
-local data = component.data;
+
+local modem = shared_data.modem;
+local data = shared_data.data;
 --
 
 -- Variables and constants
-local logger = nil;
-local log_print = true;
-local log_debug = true;
-local log_verbose = false;
-local log_buffer = true;
+local logger = shared_data.logger;
 
-local terminal = nil;
-local terminal_history = {}; --- Add often used commands here to quickly access them
+-- local terminal = nil;
+local terminal_history = {}; -- TODO: add often used commands here to quickly access them
 
-local message_wake = nil;
-
-
-local running = false;
-local publishing = false;
+-- local running = false;
+-- local publishing = false;
 
 local timer_loop = 0;
 local thread_interrupt_handler = nil;
-
 local thread_packet_processor = nil;
-local packet_processor_interval = 0.2; --- Seconds between runs
-
 local thread_alive_processor = nil;
-local alive_processor_interval = 0.2; --- Seconds between runs
 --
 
 -- Data tables
 local packet_handler = {}; --- Packet handlers for packet types (e.g. packet_handler.HANDSHAKE for handshake packets)
 local packet_queue = {}; --- Packet queue for incoming packets
 
-local nodes = Config:create( file_nodes ); --- {123abc = {name = "node-n", address = "123abc", state = false, ttl = 5}, ...}
-local nodes_by_name = {};
+-- local nodes = Config:create( shared_data.file_nodes ); --- {123abc = {name = "node-n", address = "123abc", state = false, ttl = 5}, ...}
+-- local nodes_by_name = {};
 local nodes_data = {}; --- Nodes latest data (avoid deep-nesting in nodes table for efficiency)
 local nodes_pending = {}; --- Currently pending Nodes i.e. sent handshake packet, thus waiting for register packet
 --
@@ -87,7 +74,7 @@ local function send_packet(type, receiver, data, encrypt)
     if encrypt == nil then
         encrypt = true;
     end
-    
+
     return Packet:create(
 
         modem.address,
@@ -97,7 +84,7 @@ local function send_packet(type, receiver, data, encrypt)
         data
 
     ):send( {encrypt = encrypt} );
-    
+
 end
 
 --- Constructs and fires given event as network broadcast
@@ -131,10 +118,10 @@ local function node_register(address, name)
 
     local node = Node:create(address, name);
 
-    nodes:set(address, node);
+    shared_data.nodes:set(address, node);
     nodes_data[ address ] = {};
 
-    nodes:save();
+    shared_data.nodes:save();
 
     --- Handle DNS entry creation asynchronously since it doesn't affect their cluster connectivity directly
     local dns_response = dns.entry_create(name, address, true);
@@ -149,7 +136,7 @@ end
 --- Returns node by given address
 local function node_get(address)
 
-    return nodes:get( address );
+    return shared_data.nodes:get( address );
 
 end
 
@@ -177,8 +164,8 @@ local function node_connected(address)
 end
 
 
---- Disconnects node with given address
-local function node_start(address, reason)
+--- Starts node with given address
+function shared_data.node_start(address, reason)
 
     local connected, node = node_connected( address );
 
@@ -216,48 +203,8 @@ local function node_start(address, reason)
 
 end
 
---- Disconnects node with given address
-local function node_disconnect(address, reason)
-
-    local connected, node = node_connected( address );
-
-    if not node then
-        return false, "Not found";
-    elseif not connected then
-        return false, "Not connected";
-    end
-
-
-
-    local success, result = node:disconnect();
-
-    if not success then
-        return false, result;
-    end
-
-
-    nodes_data[ address ] = {}; -- TODO: keep last node data in memory after disconnect? some stuff may use this as indicator for node's online status
-
-    logger:info("Node '" .. node.name .. "' disconnected: " .. reason);
-
-
-    send_packet_event(
-        "*",
-        constants.event.node_disconnected,
-        {
-            address = address,
-            name = node.name,
-            reason = reason
-        }
-    );
-
-
-    return true, result;
-
-end
-
 --- Shuts down node with given address
-local function node_shutdown(address, reason, reboot)
+function shared_data.node_stop(address, reason, reboot)
 
     local connected, node = node_connected( address );
 
@@ -303,9 +250,49 @@ local function node_shutdown(address, reason, reboot)
 end
 
 --- Reboots node with given address
-local function node_reboot(address, reason)
+function shared_data.node_restart(address, reason)
 
-    return node_shutdown(address, reason, true);
+    return shared_data.node_stop(address, reason, true);
+
+end
+
+--- Disconnects node with given address
+function shared_data.node_disconnect(address, reason)
+
+    local connected, node = node_connected( address );
+
+    if not node then
+        return false, "Not found";
+    elseif not connected then
+        return false, "Not connected";
+    end
+
+
+
+    local success, result = node:disconnect();
+
+    if not success then
+        return false, result;
+    end
+
+
+    nodes_data[ address ] = {}; -- TODO: keep last node data in memory after disconnect? some stuff may use this as indicator for node's online status
+
+    logger:info("Node '" .. node.name .. "' disconnected: " .. reason);
+
+
+    send_packet_event(
+        "*",
+        constants.event.node_disconnected,
+        {
+            address = address,
+            name = node.name,
+            reason = reason
+        }
+    );
+
+
+    return true, result;
 
 end
 
@@ -313,7 +300,7 @@ end
 --- Load all nodes from disk and instantiate objects
 local function nodes_load()
 
-    local success, result = nodes:load();
+    local success, result = shared_data.nodes:load();
 
     if not success then
 
@@ -326,16 +313,16 @@ local function nodes_load()
 
         local node = Node:create( _node );
 
-        nodes_by_name[ node.name ] = address;
+        shared_data.nodes_by_name[ node.name ] = address;
 
-        nodes:set(address, node);
+        shared_data.nodes:set(address, node);
 
     end
 
-    setmetatable(nodes.contents, {
+    setmetatable(shared_data.nodes.contents, {
         __index = function(_, name)
-            logger:debug(nodes_by_name[ name ])
-            return rawget(nodes.contents, nodes_by_name[ name ]);
+            logger:debug(shared_data.nodes_by_name[ name ])
+            return rawget(shared_data.nodes.contents, shared_data.nodes_by_name[ name ]);
         end
     });
 
@@ -346,8 +333,8 @@ end
 
 --- Save all nodes to disk. Node data is not persisted
 local function nodes_save()
-    
-    for address, node in pairs( nodes.contents ) do
+
+    for address, node in pairs( shared_data.nodes.contents ) do
 
         node.connected = false;
         node.status = false;
@@ -357,7 +344,7 @@ local function nodes_save()
 
     end
 
-    return nodes:save();
+    return shared_data.nodes:save();
 
 end
 
@@ -668,7 +655,7 @@ function packet_handler.DISCONNECT(packet)
     --- If node is connected, disconnect
     if node_connected( address ) then
 
-        node_shutdown(address, "Closed connection");
+        node_stop(address, "Closed connection");
 
     end
 
@@ -684,10 +671,10 @@ end
 --- Handle program interruption. Every task depends on boolean 'running', so when running is false they clean up and exit
 local function interrupt_handler()
 
-    while running do
+    while shared_data.running do
 
         event.pull("interrupted");
-        running = false;
+        shared_data.running = false;
 
     end
 
@@ -700,9 +687,9 @@ local function packet_processor()
     local attempts = 0;
     local failed = false;
 
-    while running do
+    while shared_data.running do
 
-        os.sleep( packet_processor_interval );
+        os.sleep( shared_data.packet_processor_interval );
 
         --- If packet available, pull it
         if next( packet_queue ) then
@@ -751,11 +738,11 @@ end
 --- Iterate over nodes and refresh connection, status and ttl (i.e. check if node is dead)
 local function alive_processor()
 
-    while running do
+    while shared_data.running do
 
-        os.sleep( alive_processor_interval );
+        os.sleep( shared_data.alive_processor_interval );
 
-        for _, node in pairs( nodes.contents ) do
+        for _, node in pairs( shared_data.nodes.contents ) do
 
             local address = node.address;
             local name = node.name;
@@ -822,13 +809,15 @@ end
 --- Initialize logger
 local function init_log()
 
+    shared_data.file_log = string.format(shared_data.file_log, shared_data.hostname);
+
     local logger_init_success, logger_init_result = Logger.create(
-        constants.name.core,
-        file_log,
-        log_print,
-        log_debug,
-        log_verbose,
-        log_buffer
+        shared_data.hostname,
+        shared_data.file_log,
+        shared_data.log_print,
+        shared_data.log_debug,
+        shared_data.log_verbose,
+        shared_data.log_buffer
     );
 
 
@@ -839,6 +828,7 @@ local function init_log()
     end
 
 
+    shared_data.logger = logger_init_result;
     logger = logger_init_result;
 
 end
@@ -848,7 +838,8 @@ local function init_terminal()
 
     logger:debug("To-be overriden log function" .. tostring( logger.log ))
 
-    terminal = Terminal.create("cluster-core", logger);
+    shared_data.terminal = Terminal.create("cluster-core", logger);
+    -- shared_data.terminal = terminal;
 
 end
 
@@ -856,7 +847,7 @@ end
 --- Main loop function, executed once every second
 local function loop()
 
-    if running and publishing then
+    if shared_data.running and shared_data.publishing then
 
         --- Broadcast list of registered Nodes and their data
         Packet:create(
@@ -865,7 +856,7 @@ local function loop()
             constants.port.main_data,
             constants.packet.data,
             {
-                nodes = nodes.contents,
+                nodes = shared_data.nodes.contents,
                 nodes_data = nodes_data
             }
         ):send();
@@ -880,15 +871,12 @@ local function startup()
     local time_startup = computer.uptime();
 
 
-    running = true;
-
-    message_wake = modem.address..constants.name.core;
+    shared_data.running = true;
 
     init_log();
-
-
-
     init_terminal();
+
+
 
     logger:info("----- STARTUP -----", false);
     logger:info("Starting up...\n");
@@ -925,7 +913,6 @@ local function startup()
 
         end
 
-
         modem.open(constants.port.main);
             logger:info("Modem port 'MAIN:" .. constants.port.main .. "' opened.\n");
 
@@ -937,7 +924,32 @@ local function startup()
 
 
 
-    --- Register event handlers
+    --- Retrieve local keys
+    logger:info("Retrieving local keypair...");
+
+        local success_keypair, result_keypair = shared_data.retrieve_keys();
+
+        if success_keypair then
+
+            --- If 'result_keypair' is present, keys were newly generated  TODO: add check and don't just assume everthing worked as expected
+            if result_keypair then
+
+                logger:warn("Keypair could not be retrieved. Regenerated.");
+
+            end
+
+        else
+
+            logger:error( tostring( result_keypair) );
+
+        end
+
+    logger:info("Done.\n");
+    ---
+
+
+
+--- Register event handlers
     logger:info("Registering event handlers...");
 
         -- event.listen("network_receive", handle_network);
@@ -954,7 +966,7 @@ local function startup()
     --- Start loop
     logger:info("Starting loop...");
 
-        timer_loop = event.timer(1, loop, math.huge);
+        timer_loop = event.timer(shared_data.loop_interval, loop, math.huge);
 
     logger:info("Done.\n");
     --- Start loop end
@@ -982,13 +994,13 @@ local function startup()
     logger:info("Successfully started up in " .. time_startup_finished .. " seconds.\n\n");
 
 
-    while running do
+    while shared_data.running do
 
-        local command = terminal:read(terminal_history, tab_completer);
+        local command = shared_data.terminal:read(terminal_history, command_handling.tab_completer);
 
-        terminal:redraw_input_line(true);
+        shared_data.terminal:redraw_input_line(true);
 
-        command_handler( command );
+        command_handling.command_handler( command );
 
     end
 
@@ -1008,7 +1020,7 @@ local function shutdown()
     --- Disconnect nodes
     logger:info("Disconnecting Nodes...");
 
-        for _, node in pairs( nodes.contents ) do
+        for _, node in pairs( shared_data.nodes.contents ) do
 
             node:disconnect(
                 {
@@ -1041,7 +1053,7 @@ local function shutdown()
     --- Configure modem
     logger:info("Configuring modem...");
 
-        modem.close(constants.port.main);
+        modem.close( constants.port.main );
             logger:info("Modem port 'MAIN:" .. constants.port.main .. "' closed.");
 
     logger:info("Done.\n");
@@ -1066,10 +1078,11 @@ local function shutdown()
     --- Stop loop
     logger:info("Stopping loop...");
 
-        event.cancel(timer_loop);
+        event.cancel( timer_loop );
 
     logger:info("Done.\n");
     --- Stop loop end
+
 
 
 
@@ -1078,11 +1091,38 @@ local function shutdown()
 
 
 
-    terminal:close( logger );
 
-    logger:close();
-    logger:transfer();
-    running = false;
+    shared_data.terminal:close( logger );
+
+    -- Closes and rotates logger, returns success of rotation (if current log file exceeded limit) and file to-be transfered (if succeeded, returned file is compressed file)
+    local success_rotate, result_rotate = logger:rotate();
+
+    --- If rotating suceeded, returned file 'result_rotate' is compressed file to-be transfered
+    if success_rotate then
+
+        logger:info("Logger file has been rotated. Transfering...")
+
+
+        local success_transfer, result_transfer = logger:transfer( { path = result_rotate } );
+
+        if success_transfer then
+
+            logger:info("Transfer succeeded.");
+
+        else
+
+            logger:error("Transfer failed: " .. tostring( result_transfer ));
+
+        end
+
+    else
+
+        logger:error("Logger file could not be rotated: " .. tostring( result_rotate ));
+
+    end
+
+
+    shared_data.running = false;
 
     os.exit(0);
 

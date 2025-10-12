@@ -43,6 +43,10 @@ shared_data.registered = false;
 shared_data.connected = false;
 shared_data.publishing = false;
 
+shared_data.loop_interval = 5; --- Seconds between runs
+shared_data.packet_processor_interval = 0.2; --- Seconds between runs
+shared_data.alive_processor_interval = 0.2; --- Seconds between runs
+
 shared_data.ttl_alive = computer.uptime() + constants.ttl.node;
 --
 
@@ -126,7 +130,7 @@ function shared_data.retrieve_keys()
             shared_data.key_private = key_private;
 
             return true, "Regenerated";
-            
+
         else
 
             local message_error = "Could not retrieve and/or generate local key pair. Encryption is unavailable: " .. tostring( key_public );
