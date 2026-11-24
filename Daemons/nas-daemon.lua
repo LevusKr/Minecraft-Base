@@ -12,6 +12,7 @@ local nas = require("cluster/nas-library");
 local component = require("component");
 local computer = require("computer");
 local event = require("event");
+local filesystem = require("filesystem");
 local package = require("package");
 --
 
@@ -363,6 +364,8 @@ function start()
     end
 
     computer.pushSignal("component_added", filesystem_virtual.address, "filesystem");
+
+    filesystem.mount(filesystem.proxy(filesystem_virtual.address), "/nas");
 
 end
 

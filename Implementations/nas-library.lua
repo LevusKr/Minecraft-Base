@@ -33,7 +33,7 @@ local nas = {};
 --- 'success' and 'result' are relevant for synchronous operation (asnyc = false)
 function nas.operate(operation, file, options, async, timeout, content)
 
-    local packet_request = Packet:create(
+    local packet_request = Packet.create(
         modem.address,
         constants.name.nas,
         constants.port.file,
@@ -314,13 +314,30 @@ function nas.last_modified(file, async, timeout)
 end
 
 --- Request file comparison and (optionally) download them altogether
-function nas.compare(files, download, async, timeout)
+function nas.compare(files, download, async, timeout, options)
+
+    options = options or {};
+    options.download = (download ~= nil) and download or options.download;
+
+    return nas.operate(
+        "compare",
+        files,
+        options,
+        async,
+        timeout
+    );
+
+end
+
+--- Request remote file hashes without downloading file contents
+function nas.hash(files, async, timeout)
 
     return nas.operate(
         "compare",
         files,
         {
-            download = download
+            download    = false,
+            hashes_only = true
         },
         async,
         timeout

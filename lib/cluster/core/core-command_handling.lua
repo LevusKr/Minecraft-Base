@@ -1,4 +1,10 @@
-local core_command_handler = {};
+--[[
+    Cluster-Core - Command Handling
+    TODO: description
+--]]
+
+
+local core_command_handling = {};
 
 
 -- Files and Configurations
@@ -6,7 +12,13 @@ local core_command_handler = {};
 --
 
 -- Libraries and components
+local shared_data = require("cluster/core/core-shared_data");
+local node_handling = require("cluster/core/core-node_handling");
+
 local utils_string = require("cluster/utils-string");
+
+local computer = require("computer");
+local serialization = require("serialization");
 --
 
 -- Variables and constants
@@ -14,7 +26,23 @@ local utils_string = require("cluster/utils-string");
 --
 
 -- Data tables
-core_command_handler.command_map = {
+core_command_handling.command_map = {
+    help = {
+        description = "Show help message.",
+        aliases = {
+            "?",
+            "h",
+            "man"
+        }
+    },
+
+    status = {
+        description = "Show status.",
+        aliases = {
+            "i"
+        }
+    },
+
     stop = {
         description = "Stop the Core.",
         --usage = "stop",
@@ -92,7 +120,7 @@ local function inject_command_map(map)
 
 
 
-        for _, alias in pairs( command_data.aliases ) do
+        for _, alias in pairs( command_data.aliases or {} ) do
             ---@diagnostic disable-next-line: assign-type-mismatch
             map[ alias ] = command;
         end
@@ -124,34 +152,39 @@ local function inject_command_map(map)
 
 end
 
-inject_command_map( core_command_handler.command_map );
+inject_command_map( core_command_handling.command_map );
 --
 
 
 
 --- Command handler that receives terminal input and executes corresponding command
-function core_command_handler.command_handler(command_string)
+function core_command_handling.command_handler(command_string)
 
-    if not command_string or command_string == "" then
+    if utils_string.is_null_or_empty(command_string) then
         return;
     end
 
 
-    local commands = utils_string.split( command_string );
+    local command_string_parts = utils_string.split( command_string );
 
-    logger:debug("Command received: " .. serialization.serialize( commands ));
+    shared_data.logger:debug("Command received: " .. serialization.serialize( command_string_parts ));
 
-    local command = commands[1];
-    local command_data = core_command_handler.command_map[ command ];
+    local command = command_string_parts[1];
+    local command_data = core_command_handling.command_map[ command ];
 
     if not command_data then
-        return logger:error("Command '" .. tostring( command ) .. "' not found.");
+        return shared_data.logger:error("Command '" .. tostring( command ) .. "' not found.");
     end
 
     --- If the command is an alias, use the actual command for further processing
     if type( command_data ) == "string" then
+        
         command = command_data;
-        command_data = core_command_handler.command_map[ command ];
+        command_data = core_command_handling.command_map[ command ];
+
+        if not command_data then
+            return shared_data.logger:error("Command alias '" .. command .. "' could not be resolved.");
+        end
     end
 
 
@@ -159,64 +192,76 @@ function core_command_handler.command_handler(command_string)
 
         -- TODO: display general help message
 
-        if #commands > 1 then
+        if #command_string_parts > 1 then
 
-            logger:info(command_data.description);
-            logger:info("Aliases: " .. serialization.serialize( command_data.aliases ));
+            shared_data.logger:info(command_data.description);
+            shared_data.logger:info("Aliases: " .. serialization.serialize( command_data.aliases ));
 
         end
 
+    elseif command == "status" then
+
+        shared_data.logger:info(
+            "Status:\n" ..
+            "Running: " .. tostring(shared_data.running) .. "\n" ..
+            "Core Address: " .. tostring(shared_data.address) .. "\n" ..
+            "Core Port: " .. tostring(shared_data.port) .. "\n" ..
+            "Nodes: " .. tostring(shared_data.nodes) .. "\n" ..
+            "Nodes By Name: " .. tostring(shared_data.nodes_by_name) .. "\n" ..
+            "Nodes Data: " .. tostring(shared_data.nodes_data) .. "\n" ..
+            "Packet Queue: " .. tostring(shared_data.packet_queue) .. "\n");
+
     elseif command == "stop" then
 
-        logger:warn("Exiting...");
-        running = false;
+        shared_data.logger:warn("Exiting...");
+        shared_data.update_var_running( false );
 
     elseif command == "memory" then
 
-        logger:info("Memory Usage: " .. tostring(computer.usedMemory()/1000).. "/" .. tostring(computer.totalMemory()/1000) .. " KB ("
+        shared_data.logger:info("Memory Usage: " .. tostring(computer.usedMemory()/1000).. "/" .. tostring(computer.totalMemory()/1000) .. " KB ("
             .. string.format("%.2f", tostring(computer.usedMemory()/computer.totalMemory()*100)) .. "%)");
 
-        if commands[2] then
-            logger:flush();
+        if command_string_parts[2] then
+            shared_data.logger:flush();
 
-            logger:info("Memory Usage: " .. tostring(computer.usedMemory()/1000).. "/" .. tostring(computer.totalMemory()/1000) .. " KB ("
+            shared_data.logger:info("Memory Usage: " .. tostring(computer.usedMemory()/1000).. "/" .. tostring(computer.totalMemory()/1000) .. " KB ("
                 .. string.format("%.2f", tostring(computer.usedMemory()/computer.totalMemory()*100)) .. "%)");
         end
 
     elseif command == "clear" then
 
-        terminal:clear();
+        shared_data.terminal:clear();
 
     elseif command == "node" then
 
-        if commands[2] == "list" then
+        if command_string_parts[2] == "list" then
 
             --- List all nodes here, for serialization of a specific node, see below
-            if #commands < 3 then
+            if #command_string_parts < 3 then
 
-                logger:info(serialization.serialize(nodes.contents, true));
+                shared_data.logger:info(serialization.serialize(shared_data.nodes.contents, true));
 
                 return;
 
             end
 
-        elseif commands[2] == "stop"
-            or commands[2] == "shutdown" then
+        elseif command_string_parts[2] == "stop"
+            or command_string_parts[2] == "shutdown" then
 
-            for name, address in pairs( nodes_by_name ) do
+            for name, address in pairs( shared_data.nodes_by_name ) do
 
-                node_shutdown(address, "CLI shutdown"); -- TODO: process return values
+                node_handling.node_shutdown(address, "CLI shutdown"); -- TODO: process return values
 
             end
 
             return
 
-        elseif commands[2] == "restart"
-            or commands[2] == "reboot" then
+        elseif command_string_parts[2] == "restart"
+            or command_string_parts[2] == "reboot" then
 
-            for name, address in pairs( nodes_by_name ) do
+            for name, address in pairs( shared_data.nodes_by_name ) do
 
-                node_reboot(address, "CLI reboot"); -- TODO: process return values
+                node_handling.node_reboot(address, "CLI reboot"); -- TODO: process return values
 
             end
 
@@ -226,85 +271,85 @@ function core_command_handler.command_handler(command_string)
 
 
         --- Can be either name or address, but since this is a CLI, it will be a name most of the time anyway
-        local _node = commands[2];
-        local node = nodes.contents[ _node ];
+        local _node = command_string_parts[2];
+        local node = shared_data.nodes.contents[ _node ];
 
         if node then
 
-            if commands[3] == "list"
-                or commands[3] == "ls"
-                or commands[3] == "info"
-                or commands[3] == "status" then
+            if command_string_parts[3] == "list"
+                or command_string_parts[3] == "ls"
+                or command_string_parts[3] == "info"
+                or command_string_parts[3] == "status" then
 
-                if #commands < 4 then
+                if #command_string_parts < 4 then
 
-                    logger:info(serialization.serialize(node, true));
+                    shared_data.logger:info(serialization.serialize(node, true));
 
                     return;
 
                 end
 
-                logger:info(_node .. ": " .. commands[4] .. ": " .. tostring(node[ commands[4] ]));
+                shared_data.logger:info(_node .. ": " .. command_string_parts[4] .. ": " .. tostring(node[ command_string_parts[4] ]));
 
-            elseif commands[3] == "start"
-                or commands[3] == "boot"
-                or commands[3] == "wakeup"
-                or commands[3] == "wake" then
+            elseif command_string_parts[3] == "start"
+                or command_string_parts[3] == "boot"
+                or command_string_parts[3] == "wakeup"
+                or command_string_parts[3] == "wake" then
 
-                local success, result = node_start(node.address, "CLI start");
+                local success, result = node_handling.node_start(node.address, "CLI start");
 
                 if success then
 
-                    logger:info("Node '" .. node.name .. "' started.");
+                    shared_data.logger:info("Node '" .. node.name .. "' started.");
 
                 else
 
-                    logger:warn("Node '" .. node.name .. "' could not be started: " .. tostring( result ));
+                    shared_data.logger:warn("Node '" .. node.name .. "' could not be started: " .. tostring( result ));
 
                 end
 
-            elseif commands[3] == "stop"
-                or commands[3] == "shutdown" then
+            elseif command_string_parts[3] == "stop"
+                or command_string_parts[3] == "shutdown" then
 
-                local success, result = node_shutdown(node.address, "CLI shutdown");
+                local success, result = node_handling.node_shutdown(node.address, "CLI shutdown");
 
                 if success then
 
-                    logger:info("Node '" .. node.name .. "' stopped.");
+                    shared_data.logger:info("Node '" .. node.name .. "' stopped.");
 
                 else
 
-                    logger:warn("Node '" .. node.name .. "' could not be stopped: " .. tostring( result ));
+                    shared_data.logger:warn("Node '" .. node.name .. "' could not be stopped: " .. tostring( result ));
 
                 end
 
-            elseif commands[3] == "reboot"
-                or commands[3] == "restart"
-                or commands[3] == "rb" then
+            elseif command_string_parts[3] == "reboot"
+                or command_string_parts[3] == "restart"
+                or command_string_parts[3] == "rb" then
 
-                local success, result = node_reboot(node.address, "CLI reboot");
+                local success, result = node_handling.node_reboot(node.address, "CLI reboot");
 
                 if success then
 
-                    logger:info("Node '" .. node.name .. "' rebooted.");
+                    shared_data.logger:info("Node '" .. node.name .. "' rebooted.");
 
                 else
 
-                    logger:warn("Node '" .. node.name .. "' could not be rebooted: " .. tostring( result ));
+                    shared_data.logger:warn("Node '" .. node.name .. "' could not be rebooted: " .. tostring( result ));
 
                 end
 
-            elseif commands[3] == "disconnect" then
+            elseif command_string_parts[3] == "disconnect" then
 
-                local success, result = node_disconnect(node.address, "CLI disconnect");
+                local success, result = node_handling.node_disconnect(node.address, "CLI disconnect");
 
                 if success then
 
-                    logger:info("Node '" .. node.name .. "' disconnected.");
+                    shared_data.logger:info("Node '" .. node.name .. "' disconnected.");
 
                 else
 
-                    logger:warn("Node '" .. node.name .. "' could not be disconnected: " .. tostring( result ));
+                    shared_data.logger:warn("Node '" .. node.name .. "' could not be disconnected: " .. tostring( result ));
 
                 end
 
@@ -312,13 +357,13 @@ function core_command_handler.command_handler(command_string)
 
         else
 
-            logger:error("Node '" .. tostring( _node ) .. "' not found.");
+            shared_data.logger:error("Node '" .. tostring( _node ) .. "' not found.");
 
         end
 
     else
 
-        logger:error("Command '" .. tostring( command_string ) .. "' not found.");
+        shared_data.logger:error("Command '" .. tostring( command_string ) .. "' not found.");
 
     end
 
@@ -328,7 +373,7 @@ function core_command_handler.command_handler(command_string)
 end
 
 --- Tab completer that receives terminal input and provides suggestions based on command map
-function core_command_handler.tab_completer(command_line, position)
+function core_command_handling.tab_completer(command_line, position)
 
     local line_to_cursor = command_line:sub(1, position);
     local parts = utils_string.split(line_to_cursor);
@@ -364,7 +409,7 @@ function core_command_handler.tab_completer(command_line, position)
     if num_parts == 1 then
 
         --- Completing the root commands
-        suggestions = find_suggestions(core_command_handler.command_map, part_to_complete);
+        suggestions = find_suggestions(core_command_handling.command_map, part_to_complete);
 
     elseif num_parts >= 2 and parts[1] == "node" then
 
@@ -377,7 +422,7 @@ function core_command_handler.tab_completer(command_line, position)
             end
 
             --- Suggest node names for using with further sub-commands
-            for name, _ in pairs(nodes_by_name) do
+            for name, _ in pairs(shared_data.nodes_by_name) do
                 if name:sub(1, #part_to_complete) == part_to_complete then
                     table.insert(suggestions, name)
                 end
@@ -388,9 +433,9 @@ function core_command_handler.tab_completer(command_line, position)
             local node_name = parts[2];
 
             --- Check if the second part is a valid node name
-            if nodes_by_name[ node_name ] then
+            if shared_data.nodes_by_name[ node_name ] then
                 --- It is, so we are completing the sub-commands for nodes
-                suggestions = find_suggestions(core_command_handler.command_map.node["<node>"], part_to_complete);
+                suggestions = find_suggestions(core_command_handling.command_map.node["<node>"], part_to_complete);
             end
 
         end
@@ -426,4 +471,4 @@ end
 
 
 --- Return library table
-return core_command_handler;
+return core_command_handling;

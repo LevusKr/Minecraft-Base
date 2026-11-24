@@ -1304,7 +1304,7 @@ function launch_request(target)
     target = target or ("launch_controller-" .. launch_controller_data.name_target);
 
 
-    local packet_request = Packet:create(
+    local packet_request = Packet.create(
         modem.address,
         target,
         constants.port.space_station,
@@ -1374,7 +1374,7 @@ function TODO_think_of_name(operation, pending)
     if not pending then return end
 
 
-    local packet_request = Packet:create(
+    local packet_request = Packet.create(
         modem.address,
         pending.target,
         constants.port.space_station,

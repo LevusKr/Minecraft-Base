@@ -1,3 +1,4 @@
+---@diagnostic disable: undefined-field
 local shared_data = {};
 
 
@@ -14,7 +15,6 @@ local utils_crypt = require("cluster/utils-crypt");
 
 local component = require("component");
 local computer = require("computer");
-local event = require("event");
 local os = require("os");
 
 
@@ -47,7 +47,6 @@ shared_data.ttl_alive = computer.uptime() + constants.ttl.node;
 --
 
 -- Data tables
-shared_data.packet_handler = {}; --- Packet handlers for packet types (e.g. packet_handler.HANDSHAKE for handshake packets)
 shared_data.internal_data = {}; -- Latest internal data
 --
 

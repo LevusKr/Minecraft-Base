@@ -7,8 +7,8 @@
 
 
 -- Libraries and components
-local shared_data = require("cluster/node/shared_data");
-local packet_handling = require("cluster/node/packet_handling");
+local shared_data = require("cluster/node/node-shared_data");
+local packet_handling = require("cluster/node/node-packet_handling");
 
 local constants = require("cluster/constants");
 local _event = require("cluster/event");
@@ -43,7 +43,6 @@ local timer_loop = 0;
 
 -- Data tables
 local packet_handler = packet_handling.packet_handler; --- Packet handlers for packet types (e.g. packet_handler.HANDSHAKE for handshake packets)
-shared_data.packet_handler = packet_handler; --- Set 'shared_data.packet_handler' here to remove shared_data's dependency on 'packet_handling' (cyclic dependency)
 --
 
 
@@ -53,100 +52,76 @@ shared_data.packet_handler = packet_handler; --- Set 'shared_data.packet_handler
 
 --- Globally available (e.g. via RC api) function for connecting to core
 function connect()
-
     if not shared_data.connected then
-
         return perform_handshake();
-
     end
 
     return false, "Already connected";
-
 end
 
 --- Underlying function for connecting to core
 -- TODO: eventually timeout and fail, then exit or reboot etc.
 function perform_handshake()
-
     packet_handling.send_packet_handshake();
+    
     logger:info("Sent handshake packet.");
 
 
     local success, result = _event.await("cluster_handshake");
 
     if success then
-
-        local response = Packet:decode( result );
+        local response = Packet:decode(result);
 
 
         --- Whether Core server accepts handshake request
-        shared_data.update_var_handshaked( response.data.success );
+        shared_data.update_var_handshaked(response.data.success);
 
         if shared_data.handshaked then
-            
             logger:info("Handshake succeeded.");
-
         else
-
-            logger:error("Handshake with core failed: " .. tostring( response.data.message ));
+            logger:error("Handshake with core failed: " .. tostring(response.data.message));
             return;
-
         end
 
 
         --- Whether Node is already registered at Core server
-        shared_data.update_var_registered( response.data.registered );
+        shared_data.update_var_registered(response.data.registered);
 
         if shared_data.registered then
-
             logger:info("Connection established.");
 
-            shared_data.update_var_connected( true );
+            shared_data.update_var_connected(true);
             
             event.push("cluster_connect");
-
         end
-
     else
-
         -- TODO: if handshaking was not successful, shutdown cluster-node daemon?
 
         logger:error("Handshake with core failed: " .. tostring(result or "Timed out"));
-
     end
 
 
     if shared_data.handshaked and not shared_data.registered then
-
         perform_register();
-
     end
 
 
 
     return shared_data.handshaked, shared_data.registered;
-
 end
-
-
 
 --- Globally available (e.g. via RC api) function for registering at core
 function register()
-
     if not shared_data.registered then
-
         return perform_register();
-
     end
 
     return false, "Already registered";
-
 end
 
 --- Underlying function for registering at core
 -- TODO: eventually timeout and fail, then exit or reboot etc.
 function perform_register()
-
     packet_handling.send_packet_register();
 
     logger:info("Sent register packet.");
@@ -156,11 +131,17 @@ function perform_register()
 
     if success then
 
-        local response = Packet:decode( result );
+        local response = Packet:decode(result);
 
+        -- TODO: handling
+        if not response then
+            logger:error("Failed to decode register response.");
+
+            return false, "Failed to decode register response.";
+        end
 
         --- Whether Core server accepts register request
-        shared_data.update_var_registered( response.data.success );
+        shared_data.update_var_registered(response.data.success);
 
 
         if shared_data.registered then
@@ -253,19 +234,20 @@ local function init_log()
     );
 
 
-    if not logger_init_success then
+    if not logger_init_success or type( logger_init_result ) ~= "table" then
 
         error("Error whilst initializing logger: " .. tostring( logger_init_result ));
 
     end
 
-
     shared_data.logger = logger_init_result;
     logger = logger_init_result;
 
+    logger:info("Logger initialized.");
+
 end
 
---- Main loop function, executed once every second
+--- Main loop function, executed once every 5 seconds
 local function loop()
 
     if shared_data.connected then
@@ -299,8 +281,8 @@ function start()
 
     shared_data.update_var_running( true );
 
-    init_log();
 
+    init_log();
 
 
     term.clear();
@@ -346,20 +328,19 @@ function start()
 
         else
 
-            logger:error( tostring( result_keypair) );
+            error("Error whilst retrieving local keypair: " .. tostring( result_keypair));
+            ---@diagnostic disable-next-line: undefined-field
+            os.shutdown();
 
         end
 
     logger:info("Done.\n");
-    ---
+    --- Retrieve local keys end
 
 
 
     --- Register event handlers
     logger:info("Registering event handlers...");
-
-        -- event.listen("network_receive", packet_handling.handle_network);
-        --     logger:info("Listener 'network_receive' registered.");
 
         event.listen("packet_incoming", packet_handler.generic);
             logger:info("Listener 'packet_incoming' registered.");
@@ -394,7 +375,36 @@ function start()
 
 
 
-    perform_handshake();
+    local handshake_attempts = 0;
+    local handshake_attempts_max = 3;
+
+    logger:info("Performing initial handshake with core. (" .. handshake_attempts_max .. " attempts max).\n");
+
+    while not shared_data.handshaked and handshake_attempts < handshake_attempts_max do
+
+        handshake_attempts = handshake_attempts + 1;
+        perform_handshake();
+
+        if not shared_data.handshaked then
+
+            logger:warn("Handshake failed (Attempt " .. handshake_attempts .. "/" .. handshake_attempts_max .. "). Retrying in 3 seconds...");
+            ---@diagnostic disable-next-line: undefined-field
+            os.sleep(3);
+
+        end
+
+    end
+
+    if not shared_data.handshaked then
+
+        logger:error("Failed to establish connection to core after " .. handshake_attempts_max .. " attempts. Rebooting...");
+
+        ---@diagnostic disable-next-line: undefined-field
+        os.sleep(3);
+
+        computer.shutdown(true);
+
+    end
     
 end
 
@@ -423,9 +433,6 @@ function stop()
     --- Unregister event handlers
     logger:info("Unregistering event handlers...");
 
-        -- event.ignore("network_receive", packet_handling.handle_network);
-        --     logger:info("Listener 'network_receive' unregistered.");
-
         event.ignore("packet_incoming", packet_handler.generic);
             logger:info("Listener 'packet_incoming' unregistered.");
 
@@ -453,6 +460,7 @@ function stop()
 
 
 
+    -- TODO: move to top of shutdown function?
     if shared_data.connected then
 
         disconnect();
@@ -460,15 +468,8 @@ function stop()
     end
 
 
-    --- Closes and rotates logger, returns success of rotation (if current log file exceeded limit) and file to-be transfered (if succeeded, returned file is compressed file)
-    local success_rotate, result_rotate = logger:rotate();
-
-    --- If rotating suceeded, returned file 'result_rotate' is compressed file to-be transfered
-    if success_rotate then
-
-        local success_transfer, result_transfer = logger:transfer( { path = result_rotate } );
-            
-    end
+    logger:close();
+    logger:transfer();
 
 
     os.exit(0);

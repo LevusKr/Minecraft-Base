@@ -15,8 +15,10 @@ local path_raid = "/net/";
 -- Libraries and components
 local codec = require("cluster/codec");
 local constants = require("cluster/constants");
+local dns = require("cluster/dns-library");
 local Logger = require("cluster/logger");
 local Packet = require("cluster/network_packet");
+local Stats = require("cluster/stats");
 local utils = require("cluster/utils");
 local utils_file = require("cluster/utils-file");
 local utils_string = require("cluster/utils-string");
@@ -51,6 +53,9 @@ local thread_interrupt_handler = nil;
 local operations = {}; --- Convenience table holding operations applicable to NAS files
 
 local handles = {};
+local cache_files = {}; --- In-memory metadata/hash/chunk cache indexed by file path, validated via last_modified and size
+
+local stats = Stats.create("node-nas");
 --
 
 
@@ -66,20 +71,34 @@ function data_handle(_, _packet_request)
 
 
 
-    local client = packet_request.sender;
+    local client_address = packet_request.sender;
+    local client = client_address;
     local operation = packet_request.data.operation or "info";
     local file = packet_request.data.file or ".nas-info";
     local options = packet_request.data.options or {};
     local content = packet_request.data.content;
 
+    -- TODO: if dns is unrechable, this adds extra timeout duration on uncached nodes. but dns is critical so should never fail
+    local dns_success, dns_result = dns.lookup( client_address );
+
+    if dns_success and dns_result then
+        client = dns_result;
+    end
+
     logger:info("Client '" .. tostring( client ) ..
         "' requested operation '" .. tostring( operation ) ..
-        "' on file '" .. tostring( file ) ..
+        "' on file '" .. tostring( file ) .. 
         "' with options '" .. codec.encode( options ) ..
         "'"
     );
     if content then
-        logger:info("New file content: '" .. tostring( utils_string.dotate(content, 32) ) .. "'\n");
+        local content_preview = tostring( utils_string.dotate(content, 32) ):gsub("\r", ""):gsub("\n", "\\n");
+        logger:info("New file content: '" .. content_preview .. "'");
+    end
+
+    stats:record_request(client, operation, #_packet_request);
+    if file and file ~= ".nas-info" then
+        stats:record_detail("file", file);
     end
 
 
@@ -94,12 +113,18 @@ function data_handle(_, _packet_request)
 
 
 
-    local send_success, send_result = packet_request:send_response( response );
+    local packet_response = packet_request:create_response( response );
+
+    local send_success, send_result = packet_response:send();
 
     if send_success then
         logger:info("Response to client '"  .. tostring( client ) ..  "': '" .. tostring( response.success ) .. " - " .. tostring( utils_string.dotate(codec.encode(response.result), 100) ) .. "'\n");
+
+        stats:record_response(response.success, packet_response:size());
     else
         logger:error("Response to client '"  .. tostring( client ) ..  "' couldn't be sent: " .. tostring( send_result ) .. "\n");
+
+        stats:record_error(client, operation, send_result);
     end
 
 end
@@ -117,6 +142,10 @@ end
 
 
 --<< Node Functions >>--
+
+function operations.stats()
+    return true, stats:export();
+end
 
 --- Compose information for given file. Optionally define specific critera in 'options'
 function operations.info(file, options)
@@ -154,18 +183,65 @@ function operations.info(file, options)
 
 end
 
+--- Resolves a virtual NAS file path to its physical RAID path without duplicate slashes
+local function resolve_raid_path(file)
+
+    if utils_file.join_path then
+        return utils_file.join_path(path_raid, tostring( file or "" ));
+    end
+
+    return path_raid .. tostring( file or "" ):gsub("^/+", "");
+
+end
+
+--- Ensures all parent directories of a physical RAID path exist
+local function ensure_parent_directory(path)
+
+    local dir = filesystem.path( path );
+
+    if not dir or dir == "" or filesystem.exists( dir ) then
+        return;
+    end
+
+    if utils_file.mkdir then
+
+        utils_file.mkdir( dir );
+
+    else
+
+        local segments = filesystem.segments( dir );
+        local current = "";
+
+        for _, segment in ipairs( segments ) do
+
+            current = current .. "/" .. segment;
+
+            if not filesystem.exists( current ) then
+                filesystem.makeDirectory( current );
+            end
+
+        end
+
+    end
+
+end
+
 --- Opens handle for given file. Optionally open file in binary mode via 'options.binary'
 function operations.open(file, options)
 
     options = options or {};
 
 
-    local path = path_raid .. tostring( file );
+    local path = resolve_raid_path( file );
     local handle = handles[ path ];
 
     if not handle then
 
-        handle = io.open(path, options.mode .. (options.binary and "b" or ""));
+        if options.mode == "w" or options.mode == "a" then
+            ensure_parent_directory( path );
+        end
+
+        handle = io.open(path, (options.mode or "r") .. (options.binary and "b" or ""));
 
         if not handle then
 
@@ -188,7 +264,7 @@ function operations.close(file, options)
     options = options or {};
 
 
-    local path = path_raid .. tostring( file );
+    local path = resolve_raid_path( file );
     local handle = handles[ path ];
 
     if not handle then
@@ -213,7 +289,7 @@ function operations.read(file, options)
     options = options or {};
 
 
-    local path = path_raid .. tostring( file );
+    local path = resolve_raid_path( file );
     local handle = handles[ path ];
 
     local success, result, handle = utils_file.read(
@@ -234,8 +310,12 @@ function operations.write(file, options, content)
     options = options or {};
 
 
-    local path = path_raid .. tostring( file );
+    local path = resolve_raid_path( file );
     local handle = handles[ path ];
+
+    if not handle then
+        ensure_parent_directory( path );
+    end
 
     local success, result, handle = utils_file.write(
         handle or path,
@@ -244,6 +324,7 @@ function operations.write(file, options, content)
     );
 
     handles[ path ] = handle;
+    cache_files[ file ] = nil;
     
 
     return success, result;
@@ -253,7 +334,7 @@ end
 --- Checks whether given file exists
 function operations.exists(file)
 
-    local success = filesystem.exists(path_raid .. tostring( file ));
+    local success = filesystem.exists( resolve_raid_path( file ) );
 
     if success then
         
@@ -268,7 +349,7 @@ end
 --- Checks whether given file is a directory
 function operations.is_directory(file)
 
-    local success = filesystem.isDirectory(path_raid .. tostring( file ));
+    local success = filesystem.isDirectory( resolve_raid_path( file ) );
 
     if success then
         
@@ -285,7 +366,7 @@ function operations.create(file)
 
     local success, result = false, "Already existing";
     
-    if not filesystem.exists(path_raid .. tostring( file )) then
+    if not filesystem.exists( resolve_raid_path( file ) ) then
 
         success, result = operations.write(file, _, "");
 
@@ -302,13 +383,15 @@ function operations.remove(file)
     local success, result = false, "Not existing";
 
 
-    local path = path_raid .. tostring( file );
+    local path = resolve_raid_path( file );
 
     if filesystem.exists( path ) then
 
         success, result = filesystem.remove( path );
 
         if success then
+
+            cache_files[ file ] = nil;
 
             result = "Removed"; --- 'filesystem.remove' returns no result when succeeding, but we want some message
 
@@ -341,7 +424,7 @@ end
 --- Retrieves given file's size
 function operations.size(file)
 
-    local result = filesystem.size(path_raid .. tostring( file ));
+    local result = filesystem.size( resolve_raid_path( file ) );
 
     
     return utils.format.tuple( result );
@@ -411,46 +494,305 @@ end
 --- Retrieves given file's date of last modification
 function operations.last_modified(file)
 
-    local result = filesystem.lastModified(path_raid .. tostring( file ));
+    local result = filesystem.lastModified( resolve_raid_path( file ) );
 
     return utils.format.tuple( result );
 
 end
 
---- Compares given file checksums with local corresponding files checksums and return equality. Optionally return new file content via 'options.download'
+--- Retrieves cached file metadata/hash (validated via filesystem.lastModified), reading disk only when needed
+local function get_file_cached(file, need_content, need_chunks)
+
+    local path = resolve_raid_path( file );
+    local last_modified = filesystem.lastModified( path );
+
+    if not last_modified or last_modified == 0 then
+
+        cache_files[ file ] = nil;
+        return false, nil;
+
+    end
+
+
+    local cached = cache_files[ file ];
+
+    if cached and cached.last_modified == last_modified then
+
+        local content = cached.content;
+
+        if (need_content or (need_chunks and not cached.chunks)) and not content then
+
+            content = utils_file._read(path, true);
+
+            if not content then
+                return false, nil;
+            end
+
+        end
+
+        if need_chunks and not cached.chunks and content then
+
+            cached.chunks = utils_file.chunk( content );
+            cached.chunk_hashes = utils_file.hash_chunks( cached.chunks );
+
+        end
+
+
+        return true, cached, content;
+
+    end
+
+
+    local content = utils_file._read(path, true);
+
+    if content == nil then
+        return false, nil;
+    end
+
+
+    local file_hash =
+        utils_file.hash
+        and select(1, utils_file.hash(content, true))
+        or data.crc32( content )
+    ;
+
+    cached = {
+        last_modified = last_modified,
+        size          = #content,
+        hash          = file_hash,
+        chunks        = nil,
+        chunk_hashes  = nil
+    };
+
+    if need_chunks then
+
+        cached.chunks = utils_file.chunk( content );
+        cached.chunk_hashes = utils_file.hash_chunks( cached.chunks );
+
+    end
+
+    cache_files[ file ] = cached;
+
+
+    return true, cached, content;
+
+end
+
+--- Compares given file checksums with local corresponding files checksums and return equality. Optionally return new file content or delta via 'options.download'
 function operations.compare(files, options)
+
+    options = options or {};
+
+    if options.invalidate then
+        cache_files = {};
+    end
+
 
     local success = false;
     local result = {};
+    local hashes = {};
+    local summary = {
+        total      = 0,
+        up_to_date = 0,
+        updated    = 0,
+        delta      = 0,
+        full       = 0,
+        missing    = 0,
+        bytes      = 0,
+        saved      = 0
+    };
 
     if type( files ) == "table" then
 
-        for entry_file, entry_hash in pairs( files ) do
+        --- Support both dictionary {"/path" = hash_or_table} and legacy array {{file = "/path", hash = "..."}}
+        local normalized_files = {};
 
-            local file_exists, file_content = operations.read(entry_file, {binary = true});
-            local file_equal =
-                file_exists
-                and (data.crc32( file_content ) == entry_hash)
-                or false
+        if files[1] and type( files[1] ) == "table" and files[1].file then
+
+            for _, item in ipairs( files ) do
+                normalized_files[ item.file ] = item.hash or false;
+            end
+
+        else
+
+            normalized_files = files;
+
+        end
+
+
+        for entry_file, entry_info in pairs( normalized_files ) do
+
+            summary.total = summary.total + 1;
+
+            local entry_hash =
+                type( entry_info ) == "table"
+                and entry_info.hash
+                or entry_info
+            ;
+            local entry_chunks =
+                type( entry_info ) == "table"
+                and entry_info.chunks
+                or nil
             ;
 
-            
-            if options.download and not file_equal and file_exists then
+            local file_exists, cached = get_file_cached(entry_file, false, false);
 
-                logger:warn("deflate file content")
-                os.sleep(0.25)
-    
-                result[ entry_file ] = data.deflate( file_content ); --- New file content {"file_name" = *file content*}
-    
-            else
-    
-                result[ entry_file ] = file_equal; --- Equality {"file_name" = true/false}
-    
+            --- If file without extension was requested and '.lua' exists on NAS, resolve to '.lua'
+            if (not file_exists or not cached) and type( entry_file ) == "string" and not entry_file:match("%.[%w_]+$") then
+
+                local lua_exists, lua_cached = get_file_cached(entry_file .. ".lua", false, false);
+
+                if lua_exists and lua_cached then
+
+                    entry_file = entry_file .. ".lua";
+                    file_exists = lua_exists;
+                    cached = lua_cached;
+
+                end
+
             end
-    
+
+            if not file_exists or not cached then
+
+                summary.missing = summary.missing + 1;
+                result[ entry_file ] = nil;
+
+            elseif options.hashes_only then
+
+                result[ entry_file ] = cached.hash;
+                hashes[ entry_file ] = cached.hash;
+
+            else
+
+                hashes[ entry_file ] = cached.hash;
+
+                local file_equal =
+                    (not options.force)
+                    and (entry_hash ~= false)
+                    and (entry_hash ~= nil)
+                    and (cached.hash == entry_hash)
+                    or false
+                ;
+
+                if file_equal then
+
+                    summary.up_to_date = summary.up_to_date + 1;
+                    result[ entry_file ] = true;
+
+                elseif options.download then
+
+                    local want_delta = (options.delta ~= false) and (type( entry_chunks ) == "table") and (#entry_chunks > 0);
+                    local _, cached_full, file_content = get_file_cached(entry_file, true, want_delta);
+
+                    if cached_full and file_content then
+
+                        local delta_applied = false;
+
+                        if want_delta and cached_full.chunks and cached_full.chunk_hashes then
+
+                            local delta_ok, delta_ops, bytes_saved = utils_file.compute_delta(
+                                entry_chunks,
+                                cached_full.chunks,
+                                cached_full.chunk_hashes,
+                                #file_content
+                            );
+
+                            if delta_ok then
+
+                                result[ entry_file ] = {
+                                    delta = true,
+                                    hash  = cached_full.hash,
+                                    size  = #file_content,
+                                    saved = bytes_saved,
+                                    ops   = delta_ops
+                                };
+
+                                summary.updated = summary.updated + 1;
+                                summary.delta = summary.delta + 1;
+                                summary.bytes = summary.bytes + math.max(0, #file_content - bytes_saved);
+                                summary.saved = summary.saved + bytes_saved;
+                                delta_applied = true;
+
+                            end
+
+                        end
+
+                        if not delta_applied then
+
+                            result[ entry_file ] = {
+                                delta   = false,
+                                hash    = cached_full.hash,
+                                size    = #file_content,
+                                content = file_content
+                            };
+
+                            summary.updated = summary.updated + 1;
+                            summary.full = summary.full + 1;
+                            summary.bytes = summary.bytes + #file_content;
+
+                        end
+
+                    else
+
+                        summary.missing = summary.missing + 1;
+                        result[ entry_file ] = nil;
+
+                    end
+
+                else
+
+                    result[ entry_file ] = false;
+
+                end
+
+            end
+
         end
 
         success = true;
+
+    end
+
+
+    --- If a direct recipient (client) was specified by the Update-Server, send the heavy payload directly to the client
+    if success and options.recipient and type( options.recipient ) == "table" and options.recipient.address and options.recipient.id then
+
+        local packet_direct = Packet.create(
+            modem.address,
+            options.recipient.address,
+            options.recipient.port or constants.port.update,
+            constants.packet.response,
+            {
+                id      = options.recipient.id,
+                success = true,
+                direct  = true,
+                summary = summary,
+                result  = result
+            }
+        );
+
+        local direct_success, direct_error = packet_direct:send();
+
+        local recipient_label = tostring( options.recipient.name or options.recipient.address );
+
+        if direct_success then
+
+            logger:info("Directly transferred update payload to client '" .. recipient_label .. "' (" .. tostring( summary.updated ) .. " updated, " .. tostring( summary.delta ) .. " delta, " .. utils.math.adjust_value(summary.bytes, "B") .. ").");
+
+            stats:record_response(true, packet_direct:size());
+
+            return true, {
+                forwarded = true,
+                recipient = options.recipient.address,
+                summary   = summary,
+                hashes    = hashes
+            };
+
+        else
+
+            logger:warn("Direct transfer to client '" .. recipient_label .. "' failed (" .. tostring( direct_error ) .. "). Falling back to Update-Server tunnel.");
+
+        end
 
     end
 
@@ -554,11 +896,11 @@ function startup()
 
         local mounted, message = false, "No raid found";
 
-        if component.isAvailable("raid") then
+        -- if component.isAvailable("raid") then
 
             mounted, message = filesystem.mount(filesystem.proxy("raid"), path_raid);
 
-        end
+        -- end
 
         if mounted then
 

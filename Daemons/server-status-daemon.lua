@@ -1,7 +1,8 @@
 --[[
     Server-Status-Daemon
     This Server-Status-Daemon will run on startup and check various conditions, e.g. network connection or power supply
-    and display those states via an installed Light Board in the server rack. These states can also be toggled via an installed Switch Board
+    and display those states via an installed Light Board in the server rack.
+    These states can also be toggled via an installed Switch Board.
 --]]
 
 
@@ -10,15 +11,12 @@
 
 -- Libraries and components
 local constants = require("cluster/constants");
-local Packet = require("cluster/network_packet");
-local utils = require("cluster/utils");
 
 local component = require("component");
 local os = require("os");
 local event = require("event");
 
 
-local modem = component.modem;
 local light_board = component.isAvailable("light_board") and component.light_board or nil;
 local switch_board = component.isAvailable("switch_board") and component.switch_board or nil;
 --
@@ -38,7 +36,7 @@ local timer_update_publishing_status = nil;
 
 function is_connected()
 
-    return os.getenv( constants.env.connected ) == "true" and true or false;
+    return os.getenv( constants.env.connected ) == "true";
 
 end
 
@@ -67,7 +65,7 @@ end
 
 function is_publishing()
 
-    return os.getenv( constants.env.publishing ) == "true" and true or false;
+    return os.getenv( constants.env.publishing ) == "true";
 
 end
 
@@ -114,6 +112,17 @@ function start()
     event.listen("switch_flipped", update_connection_status);
     event.listen("switch_flipped", update_publishing_status);
 
+    local running = true;
+
+    while running do
+
+        event.pull("interrupted");
+        running = false;
+
+        stop();
+
+    end
+
 end
 
 --- RC API stop function - XXX
@@ -122,13 +131,15 @@ function stop()
     event.ignore("cluster_connect", update_connection_status);
     event.ignore("cluster_disconnect", update_connection_status);
 
-    
+
     event.cancel(timer_update_publishing_status);
 
 
     event.ignore("switch_flipped", update_connection_status);
     event.ignore("switch_flipped", update_publishing_status);
-    
+
 end
+
+start();
 
 --<< RC Handling >>--

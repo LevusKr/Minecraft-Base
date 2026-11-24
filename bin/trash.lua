@@ -1,5 +1,4 @@
 local filesystem = require("filesystem");
-local term = require("term");
 
 TRASH = "/trash";
 

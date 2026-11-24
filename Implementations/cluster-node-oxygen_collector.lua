@@ -31,6 +31,7 @@ local utils = require("cluster/utils");
 local modem = component.modem;
 local gpu = component.gpu;
 local oxygen_collectors = {};
+local oxygen_tanks = {};
 --local oxygen_collector = component.oxygen_collector;
 --local tank_buffer = component.tank_controller;   TODO: implement support for small buffer tank before oxygen pipes to main tank
 --
@@ -52,6 +53,7 @@ local refresh_time = 2.0; --- Update interval (refresh rate) [seconds/update]
 
 -- Data tables
 local oxygen_collectors_data = {};
+local oxygen_tanks_data = {};
 --
 
 -- GUI stuff  TODO: rename
@@ -413,8 +415,49 @@ function display_loop()
             };
 
         end
-        
+
     --[[ Oxygen Collectors data gathering end ]]--
+
+
+    --[[ Oxygen Tanks data gathering ]]--
+
+        for i, oxygen_tank in pairs( oxygen_tanks ) do
+
+            local tank = oxygen_tank.getFluidInTank()[1];
+
+            if not tank then
+
+                oxygen_tanks_data[ oxygen_tank.address ] = {
+                    amount = nil,
+                    capacity = nil,
+                    error = "No tank found."
+                };
+
+                goto oxygen_tanks_end;
+
+            end
+
+            if not tank.name == "oxygen" then
+
+                oxygen_tanks_data[ oxygen_tank.address ] = {
+                    amount = nil,
+                    capacity = nil,
+                    error = "Tank is not filled with oxygen."
+                };
+
+                goto oxygen_tanks_end;
+
+            end
+
+            oxygen_tanks_data[ oxygen_tank.address ] = {
+                amount = tank.amount,
+                capacity = tank.capacity
+            };
+
+            ::oxygen_tanks_end::
+        end
+
+    --[[ Oxygen Tanks data gathering end ]]--
 
 
 
@@ -425,8 +468,6 @@ end
 
 --- Draws the gui to screen
 function display_draw(data)
-
-    event.onError("draw 1")
 
     local queue_redraw = {};
 
@@ -495,25 +536,17 @@ function display_draw(data)
 
         --[[ OXYGEN PROGRESS BAR ]]--
 
-            event.onError("prog bar")
-
             local oxygen_tank = data[ oxygen_collectors[ 1 ].address ].oxygen_tank or {
                 amount = 0.0,
                 capacity = 6000.0
             };
 
-            event.onError("prog bar 2")
-
 
             gui_elements.progress_bar_oxygen.value_current = oxygen_tank.amount;
             gui_elements.progress_bar_oxygen.value_max = oxygen_tank.capacity;
 
-            event.onError("prog bar 3")
-
             --gui_elements.progress_bar_oxygen:redraw();
             queue_redraw[ #queue_redraw + 1 ] = "progress_bar_oxygen";
-
-            event.onError("prog bar 4")
 
 
         --[[ OXYGEN PROGRESS BAR END ]]--

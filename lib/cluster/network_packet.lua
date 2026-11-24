@@ -27,6 +27,7 @@ local modem = require("component").modem;
         }
 --]]
 --- @class Packet
+---
 --- @field id string
 --- @field sender string
 --- @field receiver string
@@ -50,14 +51,14 @@ Packet.__index = Packet;
 --- Instantiate new packet with given parameters. First argument 'sender' could also be a table containing packet information (see Packet:decode).
 --- @param sender string Local modem address or DNS hostname
 --- @param receiver string Remote modem address or DNS hostname
---- @param port number Remote modem port
---- @param _type constants Packet type
+--- @param port Port Remote modem port
+--- @param _type PacketType Packet type
 --- @param data any Payload data
 --- 
---- @return Packet|nil
+--- @return Packet?
 --- 
 --- @overload fun(_: _, packet: table):Packet
-function Packet:create(sender, receiver, port, _type, data)
+function Packet.create(sender, receiver, port, _type, data)
 
     local packet = nil;
 
@@ -86,9 +87,7 @@ function Packet:create(sender, receiver, port, _type, data)
 end
 
 --- Send string encoded packet via network. Optionally encrypt with given ECDH crypt key or default key
---- @return boolean success
---- @return string packet_id Packet id for later referencing RESPONSE packet
---- @return string result
+--- @return boolean success, string? error
 function Packet:send(options)
 
     return network.send_packet(self, options);
@@ -106,11 +105,11 @@ end
 --- Decode string to table and instantiate packet
 --- @param raw string
 --- 
---- @return Packet|nil
+--- @return Packet?
 function Packet:decode(raw)
 
     if raw then
-        return Packet:create( codec.decode( raw ) );
+        return Packet.create( codec.decode( raw ) );
     end
 
 end
@@ -145,7 +144,7 @@ end
 --- The following handlers that mostly only care about the packet's data won't see the unimportant packet this way.
 function Packet:await_response_direct(async, timeout)
 
-    local response_future = Packet:await_response(async, timeout);
+    local response_future = self:await_response(async, timeout);
 
     response_future:on_success(
         function(packet_response)
@@ -160,9 +159,9 @@ function Packet:await_response_direct(async, timeout)
 
 end
 
---- Send response to this (previously received) packet. This function takes care of including the received packet's id for referencing
+--- Create response to this (previously received) packet. This function takes care of including the received packet's id for referencing
 --- @param response table|any Response payload
-function Packet:send_response(response, options)
+function Packet:create_response(response)
 
     response = response or {};
 
@@ -173,13 +172,21 @@ function Packet:send_response(response, options)
     response.id = self.id;
 
 
-    return Packet:create(
+    return Packet.create(
         modem.address,
         self.sender,
         self.port,
         constants.packet.response,
         response
-    ):send( options );
+    );
+
+end
+
+--- Send response to this (previously received) packet. This function takes care of including the received packet's id for referencing
+--- @param response table|any Response payload
+function Packet:send_response(response, options)
+
+    return self:create_response(response):send( options );
 
 end
 

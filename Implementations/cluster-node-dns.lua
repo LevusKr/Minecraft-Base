@@ -12,6 +12,7 @@ local Config = require("cluster/config");
 local constants = require("cluster/constants");
 local Logger = require("cluster/logger");
 local Packet = require("cluster/network_packet");
+local Stats = require("cluster/stats");
 
 local component = require("component");
 local computer = require("computer");
@@ -25,6 +26,8 @@ local modem = component.modem;
 --
 
 -- Variables and constants
+local running = false;
+
 local logger = nil;
 local log_print = true;
 local log_debug = true;
@@ -50,6 +53,8 @@ local dns_entries_reverse = Config:create( file_dns_entries_reverse );
 
 -- Data tables
 local operations = {}; --- Convenience table holding operations applicable to DNS entries
+
+local stats = Stats.create("node-dns");
 --
 
 
@@ -71,7 +76,21 @@ function data_handle(_, _packet_request)
     local address = packet_request.data.address or client;
     local option = packet_request.data.option;
 
-    logger:info("Client '" .. tostring( select(2, operations.query( client )) or client ) .. "' requested '" .. tostring( operation ) .. "' on '" .. tostring( entry ) .. "'" .. (option and (" with option '" .. tostring(option) .. "'") or ""));
+    local query_success, query_result = operations.query( client );
+
+    if query_success then
+        client = query_result;
+    end
+
+    logger:info("Client '" .. tostring( client )
+        .. "' requested '" .. tostring( operation )
+        .. "' on '" .. tostring( entry ) .. "'"
+        .. (option and (" with option '" .. tostring(option) .. "'") or ""));
+
+    stats:record_request(client, operation, #_packet_request);
+    if operation == "query" or operation == "exists" then
+        stats:record_detail("entry", entry:lower());
+    end
 
 
 
@@ -85,12 +104,18 @@ function data_handle(_, _packet_request)
 
 
 
-    local send_success, send_result = packet_request:send_response( response );
+    local packet_response = packet_request:create_response( response );
+
+    local send_success, send_result = packet_response:send();
 
     if send_success then
         logger:info("Response to client '"  .. tostring( client ) ..  "': '" .. tostring( response.success ) .. " - " .. tostring( response.result ) .. "'\n");
+
+        stats:record_response(response.success, packet_response:size());
     else
         logger:error("Response to client '"  .. tostring( client ) ..  "' couldn't be sent: " .. tostring( send_result ) .. "\n");
+
+        stats:record_error(client, operation, send_result);
     end
 
 end
@@ -151,6 +176,10 @@ function entries_save()
 
     return result_save;
 
+end
+
+function operations.stats()
+    return true, stats:export();
 end
 
 --- Check whether a DNS entry exists. Note that 'entry' can be either hostname or an address
@@ -255,7 +284,7 @@ function operations.edit(name, address, name_new)
     else
 
         return false, "No existing entry";
-        
+
     end
 
 end
@@ -269,14 +298,14 @@ end
 
 --- Handle program interruption. Every task depends on boolean 'running', so when running is false they automatically clean up and exit
 local function interrupt_handler()
-    
+
     while running do
-        
+
         event.pull("interrupted");
         running = false;
-        
+
     end
-    
+
 end
 
 --<< Threads end >>--

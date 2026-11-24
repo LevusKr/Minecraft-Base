@@ -404,7 +404,7 @@ function display_setup()
                     end
 
 
-                    local send_success, send_result = Packet:create(
+                    local send_success, send_result = Packet.create(
                         modem.address,
                         node_selected.address,
                         constants.port.main,
@@ -932,16 +932,8 @@ function shutdown()
 
 
 
-    -- TODO: move into logger.lua
-    --- Closes and rotates logger, returns success of rotation (if current log file exceeded limit) and file to-be transfered (if succeeded, returned file is compressed file)
-    local success_rotate, result_rotate = logger:rotate();
-
-    --- If rotating suceeded, returned file 'result_rotate' is compressed file to-be transfered
-    if success_rotate then
-
-        local success_transfer, result_transfer = logger:transfer( { file = result_rotate } );
-            
-    end
+    logger:close();
+    logger:transfer();
 
 
 

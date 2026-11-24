@@ -12,14 +12,8 @@ local file_log = "/var/log/cluster/node-implementation.log"; -- TODO: create new
 --
 
 -- Libraries and components
-local codec = require("cluster/codec");
-local Config = require("cluster/config");
 local constants = require("cluster/constants");
-local dns = require("cluster/dns-library");
-local _event = require("cluster/event");
-local Future = require("cluster/future");
 local Logger = require("cluster/logger");
-local network = require("cluster/network");
 local Packet = require("cluster/network_packet");
 
 local component = require("component");
@@ -77,7 +71,7 @@ function data_handle(_, _packet_request)
 
 
     --- Send request to third party component, either directly or by a library
-    local packet_request = Packet:create(
+    local packet_request = Packet.create(
         modem.address,
         constants.name.core,
         constants.port.main,
@@ -114,7 +108,7 @@ function data_handle(_, _packet_request)
     ):on_completion(
         function()
 
-            Packet:create(
+            Packet.create(
                 modem.address,
                 client,
                 packet_request.port,

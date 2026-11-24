@@ -76,7 +76,7 @@ function data_handle(_, _packet_request)
 
 
     --- Send request to third party component, either directly or by a library
-    local packet_request = Packet:create(
+    local packet_request = Packet.create(
         modem.address,
         constants.name.core,
         constants.port.main,
@@ -113,7 +113,7 @@ function data_handle(_, _packet_request)
     ):on_completion(
         function()
 
-            Packet:create(
+            Packet.create(
                 modem.address,
                 client,
                 packet_request.port,

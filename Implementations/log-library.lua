@@ -6,7 +6,7 @@
 
 
 -- Files and Configurations
-local PATH_LOG_REMOTE = "/var/log/";
+local PATH_LOG_REMOTE = "/var/log/cluster/";
 --
 
 -- Libraries and components
@@ -15,7 +15,6 @@ local Packet = require("cluster/network_packet");
 local utils_file = require("cluster/utils-file");
 
 local component = require("component");
-local event = require("event");
 local filesystem = require("filesystem");
 --
 
@@ -29,8 +28,11 @@ local log = {};
 
 
 
+
+--<< API Methods >>--
+
 --- Transfer log file to Log-Server
---- @param options table<string,string|boolean|number> Options {name,path,async,timeout}
+--- @param options table<string,string|boolean|number> Options {name,path,file,logs,append,async,timeout}
 --- @param options.name string Name of logger
 --- @param options.path string Path to log file
 --- @param options.async? boolean Run asynchronously
@@ -38,15 +40,22 @@ local log = {};
 function log.transfer(options)
 
     options = options or {};
+    options.path = options.path or options.file;
 
-	if options.name == nil then
-		return false, "No name specified";
-	end
-	if options.path == nil then
-		return false, "No path specified";
-	end
-	options.async = options.async ~= nil and options.async or false;
-	options.timeout = options.timeout or 10;
+    if options.name == nil then
+
+        return false, "No name specified";
+
+    end
+
+    if options.path == nil and options.logs == nil then
+
+        return false, "No path specified";
+
+    end
+
+    options.async = options.async ~= nil and options.async or false;
+    options.timeout = options.timeout or 10;
 
 
     if not component.isAvailable("modem") then
@@ -56,43 +65,62 @@ function log.transfer(options)
     end
 
 
-    event.onError("[" .. options.name .. ":" .. options.path .. "] Transfering...");
+    local logs_content = options.logs;
 
+    if logs_content == nil then
 
-    --self:flush(); -- TODO
+        local success_read, result_read = utils_file.read(options.path, { binary = true });
 
-    local success_read, result_read = utils_file.read(options.path, {binary = true});
+        --- When reading the file failed, 'result_read' will be an error message
+        if not success_read then
 
+            return false, result_read;
 
-    --- When reading the file failed, 'result_read' will be an error message
-    if not success_read then
-        return false, result_read;
+        end
+
+        logs_content = result_read;
+
     end
 
-    local file_name = filesystem.name( options.path );
-    local path_remote = PATH_LOG_REMOTE .. options.name .. "/" .. file_name;
+    if not logs_content or #logs_content == 0 then
+
+        return true, "Empty log skipped";
+
+    end
 
 
-    local packet_request = Packet:create(
+    local file_name = options.path and filesystem.name( options.path ) or (tostring( options.name ) .. ".log");
+
+
+    local packet_request = Packet.create(
         component.modem.address,
         constants.name.log,
         constants.port.log,
         constants.packet.data,
         {
             operation = "store",
-			name = options.name,
-            file = options.path,
-            logs = result_read
+            name = options.name,
+            file = file_name,
+            append = options.append,
+            logs = logs_content
         }
     );
 
     --- Success of sending packet and optional error message
-    local success, result = packet_request:send{open_port = true, encrypt = true};
+    local success, result = packet_request:send({ open_port = true, encrypt = true });
 
     result = result or "Log-Server unreachable"; --- If no error message is present, use default error message
 
     if not success then
-        return _, success, result; -- TODO: overhaul sync/async behavior and return signatures across codebase
+
+        if options.async then
+
+            return _, success, result;
+
+        end
+
+        return false, result;
+
     end
 
 
@@ -104,8 +132,6 @@ function log.transfer(options)
     response_future:on_success(
         function(packet_response)
 
-            event.onError("[" .. options.name .. ":" .. options.path .. "] Transfering succeeded.");
-
             success, result = packet_response.data.success, packet_response.data.result;
 
         end
@@ -113,41 +139,36 @@ function log.transfer(options)
         function(error)
 
             result = error or result;
-            
-            event.onError("[" .. options.name .. ":" .. options.path .. "] Transfering failed: " .. tostring( result ));
 
         end
     ):on_completion(
         function()
 
             --- Override future's 'packet_response' result with packet's actual payload result data, since that's what's important from now on
-            --- TODO: just override success and result, or just replace response_future.result with packet_response.data?
             response_future.result = {
                 success = success,
                 result = result
-            }
+            };
 
         end
     );
 
 
-
-    -- TODO: refactor async behavior
     if options.async then
 
         return response_future;
 
     else
 
-        --- Since the result has been awaited already and the handlers are also called immediatly, no need to await here
+        --- Since the result has been awaited already and the handlers are also called immediately, no need to await here
         return success, result;
 
     end
 
 end
 
---- Transfer log file to Log-Server
---- @param options table<string,string|boolean|number> Options {name,path,async,timeout}
+--- Retrieve log file from Log-Server
+--- @param options table<string,string|boolean|number> Options {name,path,file,async,timeout}
 --- @param options.name string Name of logger
 --- @param options.path string Path to log file
 --- @param options.async? boolean Run asynchronously
@@ -155,15 +176,22 @@ end
 function log.retrieve(options)
 
     options = options or {};
+    options.path = options.path or options.file;
 
-	if options.name == nil then
-		return false, "No name specified";
-	end
-	if options.path == nil then
-		return false, "No path specified";
-	end
-	options.async = options.async ~= nil and options.async or false;
-	options.timeout = options.timeout or 10;
+    if options.name == nil then
+
+        return false, "No name specified";
+
+    end
+
+    if options.path == nil then
+
+        return false, "No path specified";
+
+    end
+
+    options.async = options.async ~= nil and options.async or false;
+    options.timeout = options.timeout or 10;
 
 
     if not component.isAvailable("modem") then
@@ -173,30 +201,36 @@ function log.retrieve(options)
     end
 
 
-    -- event.onError("[" .. options.name .. ":" .. options.path .. "] Transfering...");
+    local file_name = filesystem.name( options.path );
 
 
-    --self:flush(); -- TODO
-
-    local packet_request = Packet:create(
+    local packet_request = Packet.create(
         component.modem.address,
         constants.name.log,
         constants.port.log,
         constants.packet.data,
         {
             operation = "retrieve",
-			name = options.name,
-            file = options.path,
+            name = options.name,
+            file = file_name
         }
     );
 
     --- Success of sending packet and optional error message
-    local success, result = packet_request:send{open_port = true, encrypt = true};
+    local success, result = packet_request:send({ open_port = true, encrypt = true });
 
     result = result or "Log-Server unreachable"; --- If no error message is present, use default error message
 
     if not success then
-        return _, success, result; -- TODO: overhaul sync/async behavior and return signatures across codebase
+
+        if options.async then
+
+            return _, success, result;
+
+        end
+
+        return false, result;
+
     end
 
 
@@ -208,8 +242,6 @@ function log.retrieve(options)
     response_future:on_success(
         function(packet_response)
 
-            -- event.onError("[" .. options.name .. ":" .. options.path .. "] Transfering succeeded.");
-
             success, result = packet_response.data.success, packet_response.data.result;
 
         end
@@ -218,37 +250,34 @@ function log.retrieve(options)
 
             result = error or result;
 
-            -- event.onError("[" .. options.name .. ":" .. options.path .. "] Transfering failed: " .. tostring( result ));
-
         end
     ):on_completion(
         function()
 
             --- Override future's 'packet_response' result with packet's actual payload result data, since that's what's important from now on
-            --- TODO: just override success and result, or just replace response_future.result with packet_response.data?
             response_future.result = {
                 success = success,
                 result = result
-            }
+            };
 
         end
     );
 
 
-
-    -- TODO: refactor async behavior
     if options.async then
 
         return response_future;
 
     else
 
-        --- Since the result has been awaited already and the handlers are also called immediatly, no need to await here
+        --- Since the result has been awaited already and the handlers are also called immediately, no need to await here
         return success, result;
 
     end
 
 end
+
+--<< API Methods end >>--
 
 
 

@@ -576,7 +576,7 @@ end
 
 function check_destination()
 
-    local packet_request = Packet:create(
+    local packet_request = Packet.create(
         modem.address,
         "telepad_controller-" .. telepad_controller_data.name_target,
         constants.port.main,

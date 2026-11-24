@@ -46,7 +46,7 @@ local cache_dns = Cache.create(
 --- Operate at DNS-Server with given arguments and return Future object
 function dns.operate(operation, entry, address, option, async)
 
-    local packet_request = Packet:create(
+    local packet_request = Packet.create(
         modem.address,
         constants.name.dns,
         constants.port.dns,
@@ -60,7 +60,7 @@ function dns.operate(operation, entry, address, option, async)
     );
 
     --- Success of sending packet and optional error message
-    local success, result = packet_request:send{open_port = true, encrypt = false}; -- TODO: encryption
+    local success, result = packet_request:send{open_port = true, encrypt = true}; -- TODO: encryption
 
     result = result or "DNS-Server unreachable"; --- If no error message is present, use default error message
 

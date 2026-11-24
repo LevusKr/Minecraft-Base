@@ -34,10 +34,10 @@ core_stdwrn.close = tty_stream.close
 local io_mt = getmetatable(io) or {}
 io_mt.__index = function(_, k)
   return
-    k == 'stdin' and io.input() or
-    k == 'stdout' and io.output() or
-    k == 'stderr' and io.error() or
-	k == 'stdwrn' and io.warning() or
+    k == 'stdin'  and io.input()   or
+    k == 'stdout' and io.output()  or
+    k == 'stderr' and io.error()   or
+    k == 'stdwrn' and io.warning() or
     nil
 end
 

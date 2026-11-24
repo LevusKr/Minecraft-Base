@@ -14,7 +14,6 @@ local _event = require("event");
 --
 
 -- Data tables
---- @module 'cluster/event'
 local event = {};
 --
 

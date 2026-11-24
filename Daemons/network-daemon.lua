@@ -2,7 +2,7 @@
     Network-Daemon
     This daemon provides advanced functionality to communicate with other machines in the network and
     handles split packet reassembly and packet decryption.
-    Also this intercepts send|broadcast calls to modem components, replacing dns resolvable hostnames with functional modem addresses.
+    Also this intercepts send|broadcast calls to modem components, replacing DNS resolvable hostnames with functional modem addresses.
 --]]
 
 
@@ -53,29 +53,40 @@ local packet_assembly = {}; --- Store packet fragments while waiting for more fr
 --- Handles raw 'modem_message' events and if receiving packets, reassembles, decompresses and decrypts packets
 function handle_message(_, sender, _, _, _, message, is_compressed, is_encrypted, index, total, seq)
 
-    --- If 'total' count is greater than just (this) one packet, expect more split packets to follow
-    if total and total > 1 then
+    index = tonumber( index ) and math.floor( tonumber( index ) ) or nil;
+    total = tonumber( total ) and math.floor( tonumber( total ) ) or nil;
 
-        --- If no table is allocated for given sequence (first split packet), prepare empty table
+    --- If 'total' count is greater than just (this) one packet, expect more split packets to follow
+    if total and total > 1 and index and seq then
+
+        --- If no table is allocated for given sequence (first split packet), prepare assembly state
         if not packet_assembly[ seq ] then
 
-            packet_assembly[ seq ] = {};
+            packet_assembly[ seq ] = {
+                parts = {},
+                count = 0
+            };
 
         end
 
 
         --- Insert split packet into memory already at correct index
-        packet_assembly[ seq ][ index ] = message;
+        if not packet_assembly[ seq ].parts[ index ] then
+
+            packet_assembly[ seq ].parts[ index ] = message;
+            packet_assembly[ seq ].count = packet_assembly[ seq ].count + 1;
+
+        end
 
 
         --- If all packets from current sequence arrived, assemble. Otherwise return here until all parts arrive
-        if #packet_assembly[ seq ] == total then
+        if packet_assembly[ seq ].count == total then
 
-            message = table.concat(packet_assembly[ seq ], "");
+            message = table.concat(packet_assembly[ seq ].parts, "", 1, total);
             packet_assembly[ seq ] = nil;
 
         else
-            return
+            return;
         end
 
     end
@@ -87,7 +98,16 @@ function handle_message(_, sender, _, _, _, message, is_compressed, is_encrypted
         assert(data, "No data card available");
 
 
-        message = data.inflate( message );
+        local inflated, inflate_error = data.inflate( message );
+
+        if not inflated then
+
+            event.onError("Decompression of incoming network packet failed: " .. tostring( inflate_error ));
+            return;
+
+        end
+
+        message = inflated;
 
     end
 
@@ -99,6 +119,13 @@ function handle_message(_, sender, _, _, _, message, is_compressed, is_encrypted
 
 
         message = codec.decode( message );
+
+        if type( message ) ~= "table" or type( message.header ) ~= "table" or not message.header.key_public or message.data == nil then
+
+            event.onError("Malformed encrypted network packet received.");
+            return;
+
+        end
 
 
         local key_public = data.deserializeKey(
@@ -113,14 +140,46 @@ function handle_message(_, sender, _, _, _, message, is_compressed, is_encrypted
         if not key_crypt_success then
 
             event.onError("Unable to calculate crypt key. Incoming message could not be decrypted.");
-            return
+            return;
 
         end
 
 
-        message.data = data.decrypt(message.data, key_crypt, message.header.iv);
+        if type( message.data ) == "table" then
 
-        message = message.data; --- Remove encryption header since it's no longer needed
+            local chunks_decrypted = {};
+
+            for chunk_index = 1, #message.data do
+
+                local chunk_dec, decrypt_error = data.decrypt(message.data[ chunk_index ], key_crypt, message.header.iv);
+
+                if not chunk_dec then
+
+                    event.onError("Decryption of incoming network packet chunk failed: " .. tostring( decrypt_error ));
+                    return;
+
+                end
+
+                chunks_decrypted[ chunk_index ] = chunk_dec;
+
+            end
+
+            message = table.concat(chunks_decrypted, "");
+
+        else
+
+            local decrypted, decrypt_error = data.decrypt(message.data, key_crypt, message.header.iv);
+
+            if not decrypted then
+
+                event.onError("Decryption of incoming network packet failed: " .. tostring( decrypt_error ));
+                return;
+
+            end
+
+            message = decrypted; --- Remove encryption header since it's no longer needed
+
+        end
 
     end
 
@@ -135,7 +194,7 @@ function handle_message(_, sender, _, _, _, message, is_compressed, is_encrypted
         if packet.type == constants.packet.response then
 
 			-- TODO: handle malformed RESPONSE packets here, i.e. when no data and thus no response id is present
-            event.push("packet_response_"..tostring(packet.data and packet.data.id), packet:encode());
+            event.push("packet_response_" .. tostring(packet.data and packet.data.id), packet:encode());
 
         else
 
@@ -147,7 +206,7 @@ function handle_message(_, sender, _, _, _, message, is_compressed, is_encrypted
 
     else
 
-        -- event.onError("Incoming packet could not be decoded: " .. tostring( packet ));
+        event.onError("Incoming packet could not be decoded: " .. tostring( packet ));
         event.push("network_receive", message);
 
     end
@@ -309,6 +368,7 @@ function start()
     override_network();
 
 
+    -- TODO: move computer.usedMemory() into some utils-computer.lua file
     computer.usedMemory = function()
 
         return computer.totalMemory() - computer.freeMemory();

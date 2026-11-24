@@ -159,7 +159,7 @@ function Future:call_handler(handler, ...)
         handler,
         debug.traceback,
         (
-            args ~= nil
+            #args > 0
             and table.unpack( args )
             or self.result
         )

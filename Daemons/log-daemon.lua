@@ -16,29 +16,23 @@
 
 
 -- Files and Configurations
-local file_log = "/var/log/node-%s.log";
+local file_log = "/var/log/cluster/daemon-log.log";
 --
 
 -- Libraries and components
 local Logger = require("cluster/logger");
-local utils = require("cluster/utils");
 
-local component = require("component");
 local event = require("event");
-
-
-local modem = component.modem;
 --
 
 -- Variables and constants
 local logger = nil;
-local log_print = true;
-local log_debug = true;
-local log_buffer = true; -- whether buffer logs or not
+local log_print = false;
+local log_debug = false;
+local log_verbose = false;
+local log_buffer = true;
 
-local hostname = nil;
-
-local timer_loop = 0;
+local running = false;
 --
 
 -- Data tables
@@ -48,9 +42,19 @@ local loggers = {};
 
 
 
-function logger_create(name, file, print, print_debug, print_verbose, use_buffer) -- create logger handle
+--<< Daemon Functions >>--
 
-	local logger_init_success, logger_init_result = Logger.create(
+--- Creates and registers a managed logger handle
+function logger_create(_, name, file, print, print_debug, print_verbose, use_buffer)
+
+    if not name or not file then
+
+        return false, "Missing logger name or file path";
+
+    end
+
+
+    local logger_init_success, logger_init_result = Logger.create(
         name,
         file,
         print,
@@ -59,59 +63,132 @@ function logger_create(name, file, print, print_debug, print_verbose, use_buffer
         use_buffer
     );
 
-
     if not logger_init_success then
 
-		-- TODO: don't error out, instead hand error message to caller
-    	error("Error whilst initializing logger: " .. tostring( logger_init_result ));
+        if logger then
+
+            logger:error("Error whilst initializing logger '" .. tostring( name ) .. "': " .. tostring( logger_init_result ));
+
+        end
+
+        return false, logger_init_result;
 
     end
 
 
-	loggers.name = logger_init_result;
+    loggers[ name ] = logger_init_result;
+
+
+    return true, logger_init_result;
 
 end
 
-function logger_rotate(name)
+--- Rotates a managed logger by name
+function logger_rotate(_, name)
 
-	if loggers.name then
+    if name and loggers[ name ] then
 
-		loggers.name:rotate();
+        return loggers[ name ]:rotate();
 
-	end
+    end
 
-end
-
-function logger_transfer(name)
-
-	if loggers.name then
-
-		loggers.name:transfer();
-
-	end
+    return false, "Logger not found";
 
 end
 
+--- Transfers a managed logger by name
+function logger_transfer(_, name, options)
 
+    if name and loggers[ name ] then
 
+        return loggers[ name ]:transfer( options );
 
-local function tick()
-  --
+    end
+
+    return false, "Logger not found";
+
 end
+
+--<< Daemon Functions end >>--
+
+
+
+
+--<< RC Lifecycle >>--
 
 function start()
-  utils.logging.info("Starting up...", file_log);
-  
-  -- startup stuff
-  event.listen("logger_create", logger_create); -- daemon (sub-daemon?) for receiving network messages
-  
-  --timer_loop = event.timer(1, tick, math.huge); -- start tick loop execution
+
+    if running then
+
+        return false, "Already running";
+
+    end
+
+
+    local success_log, result_log = Logger.create(
+        "daemon-log",
+        file_log,
+        log_print,
+        log_debug,
+        log_verbose,
+        log_buffer
+    );
+
+    if success_log then
+
+        logger = result_log;
+        logger:info("Starting up...");
+
+    end
+
+
+    event.listen("logger_create", logger_create);
+    event.listen("logger_rotate", logger_rotate);
+    event.listen("logger_transfer", logger_transfer);
+
+    running = true;
+
+    if logger then
+
+        logger:info("Started.");
+
+    end
+
 end
 
 function stop()
-  utils.logging.info("Shutting down...", log_local);  
-  
-  -- shutdown stuff   TODO: send logs to server
-  
-  --event.cancel(timer_loop);
+
+    if not running then
+
+        return false, "Not running";
+
+    end
+
+
+    event.ignore("logger_create", logger_create);
+    event.ignore("logger_rotate", logger_rotate);
+    event.ignore("logger_transfer", logger_transfer);
+
+
+    for _, managed_logger in pairs( loggers ) do
+
+        managed_logger:close();
+        managed_logger:transfer();
+
+    end
+
+    loggers = {};
+    running = false;
+
+
+    if logger then
+
+        logger:info("Shutting down...");
+        logger:close();
+        logger:transfer();
+
+    end
+
 end
+
+--<< RC Lifecycle end >>--

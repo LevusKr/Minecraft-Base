@@ -15,18 +15,21 @@ local path_logs = "/var/log/cluster/";
 -- Libraries and components
 local codec = require("cluster/codec");
 local constants = require("cluster/constants");
+local dns = require("cluster/dns-library");
 local Logger = require("cluster/logger");
 local nas = require("cluster/nas-library");
 local Packet = require("cluster/network_packet");
+local utils = require("cluster/utils");
+local utils_file = require("cluster/utils-file");
 local utils_string = require("cluster/utils-string");
 
 local component = require("component");
 local computer = require("computer");
 local event = require("event");
+local filesystem = require("filesystem");
 local os = require("os");
 local term = require("term");
 local thread = require("thread");
-local utils = require("cluster/utils");
 
 
 local modem = component.modem;
@@ -48,30 +51,58 @@ local thread_interrupt_handler = nil;
 
 
 
+--<< Helper Functions >>--
+
+--- Resolves remote NAS path for given logger name and log file path/name
+local function resolve_log_path(name, file)
+
+    local file_name = filesystem.name( tostring( file or "unknown.log" ) );
+    local dir_node = utils_file.join_path(path_logs, tostring( name or "unknown" ));
+
+    return utils_file.join_path(dir_node, file_name);
+
+end
+
+--<< Helper Functions end >>--
+
+
+
+
 --<< Data Handling >>--
 
 --- Receives data packets from network cluster, passed through by Common Node via 'cluster_data'event
 function data_handle(_, _packet_request)
 
     local packet_request = Packet:decode( _packet_request );
-    if packet_request.port ~= constants.port.log then return; end
+    if not packet_request or packet_request.port ~= constants.port.log then return; end
 
 
 
     -- TODO: handle invalid operations, parameters etc. across server-client architectures in codebase
     -- TODO: also do not just assume some default values since the client may be expecting a whole different process and return values
-    local client = packet_request.sender;
+    local client_address = packet_request.sender;
+    local client = client_address;
     local operation = packet_request.data.operation or "store";
     local name = packet_request.data.name or "unknown";
     local file = packet_request.data.file or "unknown";
+    local append = packet_request.data.append or false;
     local logs = packet_request.data.logs or "";
+
+    local dns_success, dns_result = dns.lookup( client_address );
+
+    if dns_success and dns_result then
+        client = dns_result;
+    end
+
+    local path_remote = resolve_log_path(name, file);
+    local logs_preview = tostring( utils_string.dotate(logs, 32) ):gsub("\r", ""):gsub("\n", "\\n");
 
     logger:info("Client '" .. tostring( client ) ..
         "' requested operation '" .. tostring( operation ) ..
         "' on logger '" .. tostring( name ) ..
-        "' at log file '" .. tostring( file ) ..
+        "' at log file '" .. tostring( path_remote ) ..
         "' with " .. utils.math.adjust_value(#logs, "B") .. " of data" ..
-        ": '" .. tostring( utils_string.dotate(logs, 32) ) .. "'"
+        ": '" .. logs_preview .. "'"
     );
 
 
@@ -84,55 +115,97 @@ function data_handle(_, _packet_request)
 
 
     local function handler_success(packet_response)
-        response.success, response.result = packet_response.data.success, packet_response.data.result; --- {"file_name"=true/false, ...} OR {"file_name"=*file content*} (depends on 'download' flag)
+
+        response.success, response.result = packet_response.data.success, packet_response.data.result;
+
     end
 
     local function handler_failure(message)
+
         response.success = false;
         response.result = message or response.result;
+
     end
 
     local function handler_completion()
+
         local send_success, send_result = packet_request:send_response( response );
 
         if send_success then
-            logger:info("Response to client '"  .. tostring( client ) ..  "': '" .. tostring( response.success ) .. " - " .. tostring( utils_string.dotate(codec.encode(response.result), 100) ) .. "'\n");
+
+            logger:info("Response to client '" .. tostring( client ) .. "': '" .. tostring( response.success ) .. " - " .. tostring( utils_string.dotate(codec.encode( response.result ), 100) ) .. "'\n");
+
         else
-            logger:error("Response to client '"  .. tostring( client ) ..  "' couldn't be sent: " .. tostring( send_result ) .. "\n");
+
+            logger:error("Response to client '" .. tostring( client ) .. "' couldn't be sent: " .. tostring( send_result ) .. "\n");
+
         end
+
     end
 
 
 
     if operation == "store" then
 
-        nas.write(
-
-            ((file:sub(1, 1) == "/") and "" or path_logs .. name) .. "/" .. file,
-            logs,
-            false, --- append
-            false, --- keep_open
+        local future_write, success_send, result_send = nas.operate(
+            "write",
+            path_remote,
+            {
+                append = append,
+                keep_open = false,
+                binary = true
+            },
             true, --- async
-            10 --- timeout
+            10,   --- timeout
+            logs
+        );
 
-        ):on_success(handler_success)
-        :on_failure(handler_failure)
-        :on_completion(handler_completion);
+        if not future_write then
+
+            handler_failure( result_send or "Failed to contact NAS-Server" );
+            handler_completion();
+
+            return;
+
+        end
+
+        future_write:on_success( handler_success )
+            :on_failure( handler_failure )
+            :on_completion( handler_completion );
 
     elseif operation == "retrieve" then
 
-        nas.read(
-            file,
-            "*a", --- read count
-            false, --- keep_open
+        local future_read, success_send, result_send = nas.operate(
+            "read",
+            path_remote,
+            {
+                count = "*a",
+                keep_open = false,
+                binary = true
+            },
             true, --- async
-            10 --- timeout
-        ):on_success(handler_success)
-        :on_failure(handler_failure)
-        :on_completion(handler_completion);
+            10    --- timeout
+        );
+
+        if not future_read then
+
+            handler_failure( result_send or "Failed to contact NAS-Server" );
+            handler_completion();
+
+            return;
+
+        end
+
+        future_read:on_success( handler_success )
+            :on_failure( handler_failure )
+            :on_completion( handler_completion );
+
+    else
+
+        handler_failure("Invalid operation: " .. tostring( operation ));
+        handler_completion();
 
     end
-
 
 end
 

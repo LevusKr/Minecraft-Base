@@ -6,7 +6,7 @@
 
 
 -- Libraries and components
-local shared_data = require("cluster/node/shared_data");
+local shared_data = require("cluster/node/node-shared_data");
 
 local codec = require("cluster/codec");
 local constants = require("cluster/constants");
@@ -59,10 +59,14 @@ local packet_handler = {};  --- Packet handlers
 --- Calls suitable packet handler for given packet. Called on 'packet_incoming' event
 function packet_handler.generic(_, _packet)
 
-    xpcall(
+    local success, error = xpcall(
         function()
 
             local packet = Packet:decode( _packet );
+
+            if not packet then
+                error("Failed to decode packet");
+            end
 
             if packet_handler[ packet.type ] then
 
@@ -82,12 +86,9 @@ function packet_handler.generic(_, _packet)
 
         function(error)
 
-            -- TODO: print complete _packet?
-            shared_data.logger:error("Incoming packet '" .. "packet.id" .. ":" .. codec.decode( _packet ) .. "' raised an error: " .. tostring( error ));
+            shared_data.logger:error("Incoming packet '" .. "packet.id" .. ":" .. tostring( _packet ) .. "' raised an error: " .. tostring( error ));
 
         end
-
-        -- packet
     );
 
 end
@@ -153,26 +154,33 @@ end
 -- TODO: handle disconnect properly
 function packet_handler.DISCONNECT(packet)
 
-    shared_data.update_var_handshake( false );
+    shared_data.logger:debug("Handling disconnect packet '" .. packet.id .. "'");
+
+    shared_data.update_var_handshaked( false );
     shared_data.update_var_registered( false );
     shared_data.update_var_connected( false );
     shared_data.update_var_publishing( false );
 
+    shared_data.logger:debug("Disconnect variables updated.");
 
     local reason_disconnect = packet.data.reason;
     local do_shutdown = packet.data.shutdown;
     local do_reboot = packet.data.reboot;
 
+    shared_data.logger:debug("Disconnect reason: " .. tostring( reason_disconnect ) .. ", shutdown: " .. tostring( do_shutdown ) .. ", reboot: " .. tostring( do_reboot ));
 
     event.push("cluster_disconnect", packet:encode());
 
+    shared_data.logger:debug("Cluster disconnect event fired.");
 
     if do_reboot then
 
+        shared_data.logger:debug("Rebooting computer.");
         computer.shutdown( true );
 
     elseif do_shutdown then
 
+        shared_data.logger:debug("Shutting down computer.");
         computer.shutdown();
 
     end
@@ -188,7 +196,7 @@ end
 --- Constructs and sends network packet of given type to given receiver at given port with given data payload
 function packet_handling.send_packet(type, receiver, port, data, options)
 
-    return Packet:create(
+    return Packet.create(
 
         shared_data.modem.address,
         receiver,
@@ -223,7 +231,7 @@ function packet_handling.send_packet_handshake(data)
         constants.packet.handshake,
         {
             name = shared_data.hostname,
-            key_public = shared_data.key_public.serialize() -- TODO: add nil check
+            key_public = shared_data.key_public.serialize() -- TODO: add nil check and make sending conditional. currently, the node stores no information about the last registration state, but rather expects to may not be registered every new connect. this means we have to send the public key every time.
         }
     );
 

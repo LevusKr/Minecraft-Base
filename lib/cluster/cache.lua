@@ -71,8 +71,8 @@ function Cache:refresh(key, ...)
 
     end
 
-    --- Same as above, return only relevant data, no error message-
-    return success, result;
+    --- Only report success when pcall succeeded AND load returned a non-nil value
+    return (success and result ~= nil), result;
 
 end
 

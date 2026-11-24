@@ -82,7 +82,7 @@ function energy.get(provider, attributes, options)
 
 
 
-    local packet_request = Packet:create(
+    local packet_request = Packet.create(
         modem.address,
         provider,
         constants.port.energy,
@@ -141,7 +141,7 @@ function energy.fetch(provider, options)
 
 
 
-    local packet_request = Packet:create(
+    local packet_request = Packet.create(
         modem.address,
         provider,
         constants.port.energy,
@@ -205,7 +205,7 @@ function energy.subscribe(provider, attributes, options)
 
 
 
-    local packet_request = Packet:create(
+    local packet_request = Packet.create(
         modem.address,
         provider,
         constants.port.energy,
@@ -264,7 +264,7 @@ function energy.unsubscribe(provider, options)
 
 
 
-    local packet_request = Packet:create(
+    local packet_request = Packet.create(
         modem.address,
         provider,
         constants.port.energy,

@@ -6,118 +6,96 @@
 --]]
 
 
--- Files and configurations
-local file_updates = "/etc/updates.cfg"; --- List of updateable files
---
-
 -- Libraries and components
 local codec = require("cluster/codec");
-local Config = require("cluster/config");
-local constants = require("cluster/constants");
 local update = require("cluster/update-library");
-local Packet = require("cluster/network_packet");
-local utils = require("cluster/utils");
-local utils_file = require("cluster/utils-file");
+local utils_string = require("cluster/utils-string");
 
-local component = require("component");
 local os = require("os");
 local term = require("term");
-local event = require("event");
 
-
-local modem = component.modem;
-local data = component.data;
+local cwrite = utils_string.cwrite;
 --
 
 -- Variables and Constants
 local download = false; --- If daemon should only request update availability (false) or to download new content directly (true)
-local async = false; --- Whether daemon should perform request sync or asynchronous
-local timeout = 10; --- Timeout after which request is cancelled
+local async = false;    --- Whether daemon should perform request sync or asynchronous
+local timeout = 10;     --- Timeout after which request is cancelled
+local direct = true;    --- Whether NAS-Server should transfer file data directly to this client
+local delta = true;     --- Whether incremental chunk-level deltas should be used where possible
+local force = false;    --- Whether to force re-downloading all files regardless of checksum equality
+local reboot = false;   --- Whether to automatically reboot if updates were installed
 --
 
 -- Data tables
-local config_updates = Config:create( file_updates );
-
-local updates_available = {}; --- Available updates, only used if 'download' is false (see above)
+local options_default = {
+    download = download,
+    async    = async,
+    timeout  = timeout,
+    direct   = direct,
+    delta    = delta,
+    force    = force,
+    reboot   = reboot,
+    write    = true,
+    verbose  = false
+};
+options_default.__index = options_default;
 --
+
+
+
+
+--<< Helper Functions >>--
+
+local function normalize_options(options)
+
+    if type( options ) == "string" then
+        options = codec.decode( options );
+    end
+
+    if type( options ) ~= "table" then
+        options = {};
+    end
+
+
+    return setmetatable(options, options_default);
+
+end
+
+--<< Helper Functions end >>--
 
 
 
 
 --<< Daemon Functions >>--
 
---- Check for available updates
+--- Perform update check or download via update-library
 function _update(options)
 
-    if type( options ) == "string" then
-        options = codec.decode( options );
-    end
+    options = normalize_options( options );
 
-    options = options or {
-        download = download,
-        async = async,
-        timeout = timeout
-    };
-
-
-
-
-    term.write("Checking for updateable files... "..tostring(download).."\n");
-
-    local success_hash_local, file_hashes, file_hashes_count = update.hash_local({reload = true});
-
-    --- If updates file could not be loaded, exit
-    if not success_hash_local then
-
-        --- 'file_hashes' will be an error message  TODO: refactor variable name
-        term.write("Error: " .. tostring( file_hashes ));
-
-        os.sleep( 2 );
-
-
-        return false, file_hashes;
-
-    elseif file_hashes_count == 0 then --- If no files to update, return and exit here
-
-        term.write("No files to update-check. Proceed\n");
-
-        os.sleep( 2 );
-
-        return true, "No files to update-check";
-
-    end
-
-
-
-    term.write("Contacting update server with " .. tostring( file_hashes_count ) .. " files... Timeout after " .. tostring( options.timeout ) .. " seconds\n\n");
-
-
-    local response_future, success, result = update.operate(
+    local response_future = update.operate(
         options.download and "download" or "check",
-        file_hashes,
-        file_hashes_count,
-        {
-            write = true,
-            async = options.async,
-            timeout = options.timeout
-        }
+        options
     );
-
 
     response_future:on_completion(
         function()
 
-            term.write(( success and "Success" or "Failure" ) .. " - " .. tostring( result ) .. "\n")
+            local details = response_future.result or {};
 
-            os.sleep( 2 );
+            cwrite(options.write, (details.success and "Success" or "Failure") .. " - " .. tostring( details.result ) .. "\n");
+
+            if not options.async then
+                os.sleep( 1 );
+            end
 
         end
     );
 
 
+    return response_future, response_future.result and response_future.result.success, response_future.result and response_future.result.result;
 
-    return response_future;
-    
 end
 
 --<< Daemon Functions end >>--
@@ -127,26 +105,52 @@ end
 
 --<< RC Handling >>--
 
---- RC API start function - Query Update-Server for updates
+--- RC API start function - Query Update-Server for updates on startup
 function start(options)
 
-    options = options or {};
+    options = normalize_options( options );
 
-    options = {
-        download = (options.download == nil) and download or options.download,
-        async    = (options.async    == nil) and async    or options.async,
-        timeout  = (options.timeout  == nil) and timeout  or options.timeout,
-    };
+    cwrite(options.write, "Update-Daemon starting...\n");
 
     return _update( options );
 
 end
 
---- RC API stop function - XXX
+--- RC API stop function - Clear cached state
 function stop()
 
-    -- TODO: implement
-    
+    update.available = {};
+    update.last_result = nil;
+
+end
+
+--- RC API status function - Print last update check/install status
+function status()
+
+    local last = update.last_result;
+
+    if not last then
+
+        term.write("Update-Daemon: No update operation has been executed in this session.\n");
+        return true, update.available;
+
+    end
+
+    term.write("Last status: " .. (last.success and "Success" or "Failure") .. " - " .. tostring( last.result ) .. "\n");
+
+    if update.available and #update.available > 0 then
+
+        term.write("Available updates (" .. tostring( #update.available ) .. "):\n");
+
+        for _, file in ipairs( update.available ) do
+            term.write("  - " .. tostring( file ) .. "\n");
+        end
+
+    end
+
+
+    return last.success, last;
+
 end
 
 --<< RC Handling >>--

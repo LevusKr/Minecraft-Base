@@ -49,7 +49,7 @@ local thread_interrupt_handler = nil;
 local refresh_time = 0.5; --- Update interval (refresh rate) [seconds/update]
 
 
-local airlock_controller_redstone_side = sides.left; --- Side where redstone is connected with airlock controller.
+local airlock_controller_redstone_side = sides.back; --- Side where redstone is connected with airlock controller.
 --
 
 -- GUI stuff  TODO: rename
@@ -242,7 +242,9 @@ function display_setup()
                 button_toggle_y,
                 button_toggle_width,
                 button_toggle_height,
-                "Toggle",
+                is_open()
+                    and "Close"
+                    or "Open",
 
                 button_toggle_color,
                 button_toggle_color,
@@ -266,7 +268,7 @@ function display_setup()
             local label_status_x = width / 2 - label_status_width / 2;
             local label_status_y = button_toggle_y / 2;
 
-            local label_status_text = is_open() and "|<  >|" or ">||<";
+            local label_status_text = is_open() and "|<  >|\n|<  >|" or ">||<\n>||<";
             local label_status_color = is_open() and colors.failure or colors.success;
         
             gui_elements.label_status = graphics.label(
@@ -330,10 +332,16 @@ function display_draw()
 
         --[[ TOGGLE BUTTON ]]--
 
+            gui_elements.button_toggle.label =
+                is_open()
+                and "Close"
+                or "Open"
+            ;
+
             gui_elements.button_toggle.color_selected = (
                 is_open()
-                    and colors.failure
-                    or colors.success
+                and colors.failure
+                or colors.success
             );
 
             gui_elements.button_toggle:redraw();
@@ -347,8 +355,8 @@ function display_draw()
 
             gui_elements.label_status.text =
                 is_open()
-                and "|<  >|"
-                or ">||<"
+                and "|<  >|\n|<  >|"
+                or " >||< \n >||< "
             ;
 
             gui_elements.label_status.color_label =

@@ -1,8 +1,8 @@
 --[[
     Update-Server
     Update-Server component of network cluster structure
-    A Update-Server acts as distributor of file updates, thus responding to update checks
-    with file contents for those files, or optionally if an update is possible.
+    A Update-Server acts as distributor and coordinator of file updates, responding to update checks
+    and coordinating direct or tunneled file/delta transfers from the NAS-Server.
 --]]
 
 
@@ -12,14 +12,13 @@ local file_log = "/var/log/cluster/node-update.log"; -- TODO: create new file at
 
 -- Libraries and components
 local codec = require("cluster/codec");
-local Config = require("cluster/config");
 local constants = require("cluster/constants");
-local _event = require("cluster/event");
-local Future = require("cluster/future");
+local dns = require("cluster/dns-library");
 local Logger = require("cluster/logger");
 local nas = require("cluster/nas-library");
-local network = require("cluster/network");
 local Packet = require("cluster/network_packet");
+local Stats = require("cluster/stats");
+local utils = require("cluster/utils");
 local utils_string = require("cluster/utils-string");
 
 local component = require("component");
@@ -28,7 +27,6 @@ local event = require("event");
 local os = require("os");
 local term = require("term");
 local thread = require("thread");
-local utils = require("cluster/utils");
 
 
 local modem = component.modem;
@@ -46,6 +44,14 @@ local hostname = nil;
 local running = false;
 local timer_loop = 0;
 local thread_interrupt_handler = nil;
+
+local timeout_default = 10; --- Default timeout for NAS requests if none is provided in options
+--
+
+-- Data tables
+local operations = {}; --- Convenience table holding operations applicable to Update-Server requests
+
+local stats = Stats.create("node-update");
 --
 
 
@@ -64,67 +70,73 @@ function data_handle(_, _packet_request)
 
 
 
-            local client = packet_request.sender;
-            local operation = packet_request.data.operation;
-            local files = packet_request.data.files; -- files to check {"file_name"="h7ugtfe", ...}
-            local files_count = packet_request.data.files_count;
-            local download = operation == "download";
+            local client_address = packet_request.sender;
+            local client = client_address;
+            local operation = packet_request.data.operation or "check";
+            local files = packet_request.data.files or {};
+            local files_count = packet_request.data.files_count or 0;
+            local options = packet_request.data.options or {};
 
-            logger:info("Client '" .. tostring( client ) .. "' requested '" .. tostring( operation ) .. "' for ".. tostring( files_count ) .. " files. Contacting NAS-Server..."); -- TODO: fix files count
+            if files_count == 0 and type( files ) == "table" then
 
+                for _ in pairs( files ) do
+                    files_count = files_count + 1;
+                end
 
-
-            local response = {
-                success = false,
-                result = "NAS-Server unreachable"
-            };
-
-            
-            local response_future, success, result = nas.compare(
-
-                files,
-                download,
-                true, -- async
-                10 -- timeout
-
-            );
-
-            if response_future == nil and not success then
-                logger:warn(tostring(result));
-                return;
             end
 
-            response_future:on_success(
-                function(packet_response)
 
-                    response.success, response.result = packet_response.data.success, packet_response.data.result; -- {"file_name"=true/false, ...} OR {"file_name"=*file content*} (depends on download flag)
+            local dns_success, dns_result = dns.lookup( client_address );
 
-                end
-            ):on_failure(
-                function(error)
+            if dns_success and dns_result then
+                client = dns_result;
+            end
 
-                    response.result = error or response.result;
 
-                end
-            ):on_completion(
-                function()
-
-                    local send_success, send_result = packet_request:send_response( response );
-
-                    if send_success then
-                        logger:info("Response to client '"  .. tostring( client ) ..  "': '" .. tostring( response.success ) .. " - " .. tostring( utils_string.dotate(codec.encode(response.result), 100) ) .. "'\n");
-                    else
-                        logger:error("Response to client '"  .. tostring( client ) ..  "' couldn't be sent: " .. tostring( send_result ) .. "\n");
-                    end
-
-                end
+            logger:info("Client '" .. tostring( client ) ..
+                "' requested '" .. tostring( operation ) ..
+                "' for " .. tostring( files_count ) ..
+                " files with options '" .. codec.encode( options ) .. "'."
             );
 
+            stats:record_request(client, operation, #_packet_request);
 
+            if type( files ) == "table" then
+
+                for entry_file in pairs( files ) do
+                    if type( entry_file ) == "string" then
+                        stats:record_detail("file", entry_file);
+                    end
+                end
+
+            end
+
+
+            if operations[ operation ] then
+
+                operations[ operation ](files, files_count, options, packet_request, client, client_address);
+
+            else
+
+                local response = {
+                    success = false,
+                    result  = "Unsupported operation: " .. tostring( operation )
+                };
+
+                local packet_response = packet_request:create_response( response );
+                local send_success, send_result = packet_response:send();
+
+                if send_success then
+                    stats:record_response(false, packet_response:size());
+                else
+                    stats:record_error(client, operation, send_result);
+                end
+
+            end
 
         end,
         _packet_request
-    )
+    );
 
     if not data_handle_success then
 
@@ -142,6 +154,230 @@ function data_send(data)
 end
 
 --<< Data Handling end >>--
+
+
+
+
+--<< Node Functions >>--
+
+--- Export server statistics
+function operations.stats(_, _, _, packet_request, client)
+
+    local response = {
+        success = true,
+        result  = stats:export()
+    };
+
+    local packet_response = packet_request:create_response( response );
+    local send_success, send_result = packet_response:send();
+
+    if send_success then
+        logger:info("Sent stats to client '" .. tostring( client ) .. "'.\n");
+        stats:record_response(true, packet_response:size());
+    else
+        logger:error("Stats response to client '" .. tostring( client ) .. "' couldn't be sent: " .. tostring( send_result ) .. "\n");
+        stats:record_error(client, "stats", send_result);
+    end
+
+end
+
+--- Invalidate file hash and chunk cache on NAS-Server
+function operations.invalidate(_, _, options, packet_request, client)
+
+    options = options or {};
+
+    local response = {
+        success = false,
+        result  = "NAS-Server unreachable"
+    };
+
+    local response_future, success, result = nas.compare(
+        {},
+        false,
+        true,
+        options.timeout or timeout_default,
+        {
+            invalidate = true
+        }
+    );
+
+    if response_future == nil and not success then
+
+        logger:warn( tostring( result ) );
+        packet_request:send_response( response );
+        stats:record_error(client, "invalidate", result);
+        return;
+
+    end
+
+    response_future:on_success(
+        function(packet_response)
+
+            response.success = packet_response.data.success;
+            response.result = "Update and NAS caches invalidated";
+
+        end
+    ):on_failure(
+        function(error)
+
+            response.result = error or response.result;
+
+        end
+    ):on_completion(
+        function()
+
+            local packet_response = packet_request:create_response( response );
+            local send_success, send_result = packet_response:send();
+
+            if send_success then
+                logger:info("Cache invalidation response to client '" .. tostring( client ) .. "': '" .. tostring( response.success ) .. " - " .. tostring( response.result ) .. "'\n");
+                stats:record_response(response.success, packet_response:size());
+            else
+                logger:error("Cache invalidation response to client '" .. tostring( client ) .. "' couldn't be sent: " .. tostring( send_result ) .. "\n");
+                stats:record_error(client, "invalidate", send_result);
+            end
+
+        end
+    );
+
+end
+
+--- Compare client file hashes with NAS-Server and optionally coordinate direct or tunneled file/delta transfer
+local function handle_compare_or_download(download, files, files_count, options, packet_request, client, client_address)
+
+    options = options or {};
+
+    local operation_name = download and "download" or "check";
+    local use_direct = download and (options.direct ~= false);
+    local use_delta = (options.delta == nil) and true or options.delta;
+    local use_force = options.force or false;
+    local timeout = options.timeout or timeout_default;
+
+    local response = {
+        success = false,
+        result  = "NAS-Server unreachable"
+    };
+
+    local nas_options = {
+        download  = download,
+        delta     = use_delta,
+        force     = use_force,
+        timeout   = timeout,
+        recipient = use_direct and {
+            name    = client,
+            address = client_address,
+            port    = packet_request.port,
+            id      = packet_request.id
+        } or nil
+    };
+
+    local forwarded_directly = false;
+
+    local response_future, success, result = nas.compare(
+        files,
+        download,
+        true,
+        timeout,
+        nas_options
+    );
+
+    if response_future == nil and not success then
+
+        logger:warn( tostring( result ) );
+
+        response.result = result or response.result;
+        local packet_response = packet_request:create_response( response );
+        packet_response:send();
+
+        stats:record_error(client, operation_name, response.result);
+        return;
+
+    end
+
+    response_future:on_success(
+        function(packet_response)
+
+            local nas_data = packet_response.data or {};
+            local nas_result = nas_data.result;
+
+            if nas_data.success and type( nas_result ) == "table" and nas_result.forwarded then
+
+                forwarded_directly = true;
+                response.success = true;
+                response.result = nas_result.summary;
+
+            else
+
+                response.success = nas_data.success;
+                response.result = nas_result;
+
+            end
+
+        end
+    ):on_failure(
+        function(error)
+
+            response.result = error or response.result;
+
+        end
+    ):on_completion(
+        function()
+
+            --- If NAS-Server already delivered the payload directly to the client, only log & record stats here
+            if forwarded_directly then
+
+                local summary = response.result or {};
+
+                logger:info("NAS-Server directly delivered updates to client '" .. tostring( client ) ..
+                    "' (checked: " .. tostring( summary.total or files_count ) ..
+                    ", updated: " .. tostring( summary.updated or 0 ) ..
+                    ", delta: " .. tostring( summary.delta or 0 ) ..
+                    ", saved: " .. utils.math.adjust_value(summary.saved or 0, "B") .. ").\n"
+                );
+
+                stats:record_response(true, 0);
+                return;
+
+            end
+
+
+            local packet_response = packet_request:create_response( response );
+            local send_success, send_result = packet_response:send();
+
+            if send_success then
+
+                logger:info("Response to client '" .. tostring( client ) .. "': '" .. tostring( response.success ) .. " - " .. tostring( utils_string.dotate(codec.encode( response.result ), 100) ) .. "'\n");
+
+                stats:record_response(response.success, packet_response:size());
+
+            else
+
+                logger:error("Response to client '" .. tostring( client ) .. "' couldn't be sent: " .. tostring( send_result ) .. "\n");
+
+                stats:record_error(client, operation_name, send_result);
+
+            end
+
+        end
+    );
+
+end
+
+--- Check file equality against NAS-Server
+function operations.check(files, files_count, options, packet_request, client, client_address)
+
+    handle_compare_or_download(false, files, files_count, options, packet_request, client, client_address);
+
+end
+
+--- Coordinate file/delta download from NAS-Server
+function operations.download(files, files_count, options, packet_request, client, client_address)
+
+    handle_compare_or_download(true, files, files_count, options, packet_request, client, client_address);
+
+end
+
+--<< Node Functions end >>--
 
 
 
@@ -202,16 +438,16 @@ end
 function startup()
 
     local time_startup = computer.uptime();
-  
+
 
     running = true;
 
     hostname = utils.internal.hostname();
 
     init_log();
-    
 
-  
+
+
     term.clear();
     logger:info("----- STARTUP -----", false);
     logger:info("Starting up...\n");

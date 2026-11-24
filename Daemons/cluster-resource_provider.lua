@@ -13,7 +13,7 @@ local name_log = "resource-provider";
 
 -- Libraries and components
 local constants = require("cluster/constants");
-local logger = require("cluster/logger");
+local Logger = require("cluster/logger");
 local resources = require("cluster/resources");
 local Packet = require("cluster/network_packet");
 
@@ -24,6 +24,8 @@ local modem = component.modem;
 --
 
 -- Variables and constants
+local logger = nil;
+
 local timer_publish = 0;
 local interval_publish = 10; --- Publish data every n seconds
 --
@@ -44,10 +46,15 @@ local subscriptions = {
 --<< Daemon Functions >>--
 
 --- Receives data packets from network cluster, passed through by Common Node via 'cluster_data' event
-function data_handle(_, _packet_request)
+local function data_handle(_, _packet_request)
 
     local packet_request = Packet:decode( _packet_request );
-    if packet_request.port ~= constants.port.logistics then
+
+    if not packet_request then
+        logger:info(name_log, "Resource Provider: Received invalid data packet");
+    end
+
+    if not packet_request or packet_request.port ~= constants.port.logistics then
         return;
     end
 
@@ -57,7 +64,7 @@ function data_handle(_, _packet_request)
     local operation = packet_request.data.operation;
     local attributes = packet_request.data.payload;
 
-    logger.temporary(name_log, "Client '" .. tostring( client ) .. "' requested '" .. tostring( operation ) .. "' with payload '" .. tostring( attributes ) .. "'");
+    logger:info("Client '" .. tostring( client ) .. "' requested '" .. tostring( operation ) .. "' with payload '" .. tostring( attributes ) .. "'");
 
 
 
@@ -171,8 +178,6 @@ end
 --- Fetches and publishes subscribed attributes to subscribers   TODO: don't just fetch and pub every few seconds (see 'interval_publish' on top) but rather when values actually change
 function subscription_publish()
 
-    modem.open( constants.port.logistics );
-
     for client, attributes in pairs( subscriptions ) do
 
         local data_publish = {
@@ -217,7 +222,7 @@ function subscription_publish()
 
 
         -- TODO: check success of sending packet here?
-        local send_success, send_result = Packet:create(
+        local send_success, send_result = Packet.create(
             modem.address,
             client,
             constants.port.logistics,
@@ -247,6 +252,22 @@ end
 --- RC API start function - Listen to network messages
 function start()
 
+    local success, result = Logger.create(
+        name_log,
+        "/var/log/cluster/" .. name_log .. ".log",
+        false,
+        false,
+        false,
+        true
+    );
+
+    if not success or type( result ) ~= "table" then
+        error("Resource Provider: Failed to create logger: " .. tostring( result ));
+    end
+
+    logger = result;
+
+
     modem.open( constants.port.logistics );
 
     event.listen("cluster_data", data_handle);
@@ -254,7 +275,7 @@ function start()
     timer_publish = event.timer(interval_publish, subscription_publish, math.huge);
 
 
-    logger.temporary(name_log, "Resource Provider started.");
+    logger:info("Resource Provider started.");
 
 end
 
@@ -266,7 +287,8 @@ function stop()
     event.cancel( timer_publish );
 
 
-    logger.temporary(name_log, "Resource Provider stopped.");
+    logger:info("Resource Provider stopped.");
+    logger:close();
 
 end
 

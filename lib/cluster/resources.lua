@@ -75,6 +75,7 @@ resources.oxygen = {
     amount = attribute_DEFAULT,
     capacity = attribute_DEFAULT,
     ["in"] = attribute_DEFAULT,
+    out = attribute_DEFAULT,
 };
 
 setmetatable(resources.oxygen, attribute_caller);
@@ -105,7 +106,7 @@ function resources.generic(operation, provider, attributes, options)
     ---
 
 
-    local packet_request = Packet:create(
+    local packet_request = Packet.create(
         modem.address,
         provider,
         constants.port.logistics,
@@ -117,12 +118,12 @@ function resources.generic(operation, provider, attributes, options)
     );
 
     --- Success of sending packet and optional error message
-    local success, result = packet_request:send{open_port = true, encrypt = false};
+    local success, result = packet_request:send{open_port = true, encrypt = true};
 
     result = result or "Timed out"; --- If no error message is present, use default error message
 
     if not success then
-        return success, result;
+        return false, result;
     end
 
 

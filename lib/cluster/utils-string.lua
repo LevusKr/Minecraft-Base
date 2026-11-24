@@ -7,6 +7,8 @@
 
 -- Libraries and components
 local utils = require("cluster/utils");
+
+local term = require("term");
 --
 
 -- Data tables
@@ -18,7 +20,34 @@ local utils_string = {};
 
 --<< API Methods >>--
 
+--- Checks if given string is null or empty
+--- @param str string
+--- @return boolean true if string is null or empty, false otherwise
+function utils_string.is_null_or_empty(str)
+
+    return not str or str == "";
+
+end
+
+--- Trims leading and trailing whitespace from given string
+--- @param str string
+--- @return string
+function utils_string.trim(str)
+
+    if str == nil then
+        return "";
+    end
+
+    return tostring( str ):match("^%s*(.-)%s*$") or "";
+
+end
+
 --- Shortens given string 'str' down to 'size_max' and places an 'indicator'-string in the beginning, middle or end, depending on whether the first, first and last or last characters are visible, which is defined via 'visible'
+--- @param str string
+--- @param size_max integer
+--- @param visible string
+--- @param indicator string
+--- @return string
 function utils_string.dotate(str, size_max, visible, indicator)
 
     str = tostring( str );
@@ -70,6 +99,10 @@ function utils_string.dotate(str, size_max, visible, indicator)
     
 end
 
+--- Split string 'str' by 'separator'
+--- @param str string
+--- @param separator string? Default: " "
+--- @return table
 function utils_string.split(str, separator)
 
     str = tostring( str );
@@ -83,6 +116,55 @@ function utils_string.split(str, separator)
 
 
     return parts;
+
+end
+
+--- Parses a boolean, string ("true"/"false"/"1"/"0") or nil into a boolean with fallback default
+--- @param value any
+--- @param default boolean?
+--- @return boolean?
+function utils_string.parse_boolean(value, default)
+
+    if value == nil then
+
+        return default;
+
+    elseif type( value ) == "boolean" then
+
+        return value;
+
+    elseif type( value ) == "string" then
+
+        local lower = value:lower();
+
+        if lower == "true" or lower == "1" or lower == "yes" then
+            return true;
+        elseif lower == "false" or lower == "0" or lower == "no" then
+            return false;
+        end
+
+    end
+
+
+    return default;
+
+end
+
+--- Conditionally writes text to terminal (or optional stream) when 'condition' is truthy
+--- @param condition any
+--- @param text string
+--- @param stream table?
+function utils_string.cwrite(condition, text, stream)
+
+    if condition then
+
+        if stream then
+            stream:write( tostring( text ) );
+        else
+            term.write( tostring( text ) );
+        end
+
+    end
 
 end
 

@@ -20,6 +20,12 @@ local modem = component.modem;
 
 -- Data tables
 --- @class Node
+---
+--- @field name string
+--- @field address string
+--- @field connected boolean
+--- @field status boolean
+--- @field ttl number
 --- @module 'cluster/network_node'
 local Node = {
     name = "unknown",
@@ -41,38 +47,34 @@ Node.__index = Node;
 --- @param name string
 ---
 --- @return Node
+---
+--- @overload fun(node: table):Node
 function Node:create(address, name)
     local node = {};
 
     if type(address) == "string" then --- If called with single parameters
-
         node = setmetatable({
             name = name,
             address = address,
             connected = true,
             status = true,
-            ttl = computer.uptime() + 5
+            ttl = computer.uptime() + constants.ttl.node
         }, Node);
-
     elseif type(address) == "table" then --- If called with a ready-to-go table (e.g. after decoding)
-
         node = setmetatable(address, Node);
-
     end
 
 
     return node;
 end
 
-
 --- Sends a network packet from primary modem component to specified node address
---- @param type constants Packet type
+--- @param type PacketType Packet type
 --- @param data any Payload data
---- 
---- @return boolean success, string result
+---
+--- @return boolean success, string? error
 function Node:send(type, data, options)
-
-    return Packet:create(
+    return Packet.create(
 
         modem.address,
         self.address,
@@ -80,32 +82,26 @@ function Node:send(type, data, options)
         type,
         data
 
-    ):send( options );
-
+    ):send(options);
 end
 
 --- Marks node as active and thus refreshes status and ttl
 function Node:active()
-
     self.connected = true;
     self.status = true;
     self.ttl = computer.uptime() + constants.ttl.node;
-
 end
 
 function Node:inactive()
-
     self.status = false;
     self.ttl = -1;
-
 end
 
 --- Refreshes status and informs node of active connection by sending (usually as respond to previously received alive packet) alive packet
 --- @param options table Options TODO: defaults
---- 
---- @return boolean success, string result
+---
+--- @return boolean success, string? error
 function Node:alive(options)
-
     options = options or {};
 
     options.encrypt = options.encrypt ~= nil and options.encrypt or true;
@@ -113,9 +109,7 @@ function Node:alive(options)
 
 
     if not options.packet_only then
-
         self:active();
-
     end
 
     return self:send(
@@ -123,15 +117,13 @@ function Node:alive(options)
         _,
         options
     );
-
 end
 
 --- Disconnects node by sending disconnect packet
 --- @param options table Options TODO: defaults
---- 
---- @return boolean success, string packet_id, string result
+---
+--- @return boolean success, string? error
 function Node:disconnect(options)
-
     options = options or {};
 
     options.encrypt = options.encrypt ~= nil and options.encrypt or true;
@@ -152,31 +144,25 @@ function Node:disconnect(options)
             encrypt = options.encrypt
         }
     );
-
 end
 
 --- Sends a wakeup message from primary modem component to specified node address
 function Node:wakeup()
-
     return modem.send(self.address, constants.port.remote, self.address .. self.name);
-
 end
 
 --- Tries to shutdown node by disconnecting it
 function Node:shutdown(reason_disconnect)
-
     return self:disconnect(
         {
             reason = reason_disconnect,
             shutdown = true
         }
     );
-
 end
 
 --- Tries to reboot node by disconnecting and then waking it up again
 function Node:reboot(reason_reboot)
-
     return self:disconnect(
         {
             reason = reason_reboot,
@@ -185,22 +171,16 @@ function Node:reboot(reason_reboot)
     );
 
     --self:wakeup();
-
 end
-
 
 --- Encode node to string for storing or networking
 function Node:encode()
-
-    return codec.encode( self );
-
+    return codec.encode(self);
 end
 
 --- Decode string to table and instantiate node
 function Node.decode(raw)
-
-    return Node:create( codec.decode( raw ) );
-
+    return Node:create(codec.decode(raw));
 end
 
 --<< Class Methods end >>--
